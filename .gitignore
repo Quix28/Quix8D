@@ -1,0 +1,4 @@
+.worktrees/
+.build/
+build/
+.swiftpm/

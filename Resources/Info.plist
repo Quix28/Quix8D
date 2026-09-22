@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>CFBundleIdentifier</key>
+    <string>com.quix28.quix8d</string>
+    <key>CFBundleName</key>
+    <string>Quix8D</string>
+    <key>CFBundleDisplayName</key>
+    <string>Quix8D</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
+    <key>CFBundleExecutable</key>
+    <string>Quix8D</string>
+    <key>CFBundlePackageType</key>
+    <string>APPL</string>
+    <key>CFBundleShortVersionString</key>
+    <string>1.0</string>
+    <key>LSMinimumSystemVersion</key>
+    <string>14.4</string>
+    <key>LSUIElement</key>
+    <true/>
+    <key>NSAudioCaptureUsageDescription</key>
+    <string>Quix8D needs to capture system audio to apply the rotating 8D effect.</string>
+    <key>NSMotionUsageDescription</key>
+    <string>Quix8D uses AirPods head tracking so sounds stay put as you turn your head, which makes front and back easier to tell apart.</string>
+</dict>
+</plist>
