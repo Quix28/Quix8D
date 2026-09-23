@@ -11,7 +11,14 @@ struct ControlPanelView: View {
             switch controller.page {
             case .main: mainPage
             case .mix: MixPage(controller: controller)
-            case .effects: EffectsPage(effects: $controller.effects, isEnabled: controller.effectsOn)
+            case .effects:
+                VStack(alignment: .leading, spacing: 8) {
+                    HStack {
+                        Text("Effects for").font(.headline)
+                        AppTargetMenu(targets: controller.effectsTargets, selection: $controller.effectsTarget)
+                    }
+                    EffectsPage(effects: $controller.selectedEffects, isEnabled: controller.effectsOn)
+                }
             }
         }
         .padding(16)
@@ -157,6 +164,26 @@ struct ControlPanelView: View {
     }
 }
 
+/// "Master" or one app; nil selection is Master.
+private struct AppTargetMenu: View {
+    let targets: [AudioApp]
+    @Binding var selection: String?
+
+    var body: some View {
+        Menu(targets.first { $0.id == selection }?.name ?? "Master") {
+            Button("Master") { selection = nil }
+            if !targets.isEmpty {
+                Divider()
+            }
+            ForEach(targets) { app in
+                Button(app.name) { selection = app.id }
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+    }
+}
+
 private struct MixPage: View {
     @ObservedObject var controller: MenuBarController
     @State private var presetName: String?
@@ -168,7 +195,7 @@ private struct MixPage: View {
             Divider()
             HStack {
                 Text("EQ").font(.headline)
-                targetMenu
+                AppTargetMenu(targets: controller.eqTargets, selection: $controller.eqTarget)
                 presetsMenu
                 Spacer()
                 Toggle("RTA", isOn: $controller.isAnalyzerOn)
@@ -193,23 +220,6 @@ private struct MixPage: View {
 }
 
 extension MixPage {
-    private var targetMenu: some View {
-        let targets = controller.eqTargets
-        let name = targets.first { $0.id == controller.eqTarget }?.name ?? "Master"
-        return Menu(name) {
-            Button("Master") { controller.eqTarget = nil }
-            if !targets.isEmpty {
-                Divider()
-            }
-            ForEach(targets) { app in
-                Button(app.name) { controller.eqTarget = app.id }
-            }
-        }
-        .menuStyle(.borderlessButton)
-        .fixedSize()
-        .accessibilityLabel("EQ for")
-    }
-
     private var presetsMenu: some View {
         Menu("Presets") {
             ForEach(controller.eqPresets) { preset in

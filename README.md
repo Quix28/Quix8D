@@ -97,7 +97,10 @@ Click the **Q** in the menu bar to open the panel.
   under the cursor.
 
 **Effects page:** six effects, each with its own switch and knobs. The
-**↺** button on a card puts its knobs back to their defaults.
+**↺** button on a card puts its knobs back to their defaults. The
+**Effects for** menu picks **Master** or one app, so Spotify can get reverb
+while Chrome stays dry. App effects run on that app before mixing; the
+Effects switch in the header turns them all off.
 
 ## Known limitations
 

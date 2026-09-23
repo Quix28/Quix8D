@@ -2,7 +2,7 @@ import CoreAudio
 import XCTest
 @testable import Quix8D
 
-final class AppEQTests: XCTestCase {
+final class AppChannelTests: XCTestCase {
     private let frames = 480 // 10 cycles of 1 kHz at 48 kHz, so the buffer loops seamlessly
 
     private var cut: EQSettings {
@@ -13,8 +13,13 @@ final class AppEQTests: XCTestCase {
         return eq
     }
 
-    /// RMS of the output in dBFS once filters settle; tap 0 plays a 1 kHz tone, tap 1 is silent.
     private func outputLevel(configure: (AudioPipeline) -> Void) -> Double {
+        outputLevels(configure: configure).left
+    }
+
+    /// Output RMS per side in dBFS once filters settle. Tap 0 ("tone") plays a
+    /// 1 kHz tone, on its left channel only if `leftOnly`; tap 1 ("silent") is silent.
+    private func outputLevels(leftOnly: Bool = false, configure: (AudioPipeline) -> Void) -> (left: Double, right: Double) {
         let pipeline = AudioPipeline()
         pipeline.isBypassed = true
         configure(pipeline)
@@ -36,13 +41,39 @@ final class AppEQTests: XCTestCase {
             storage.append(buffer)
             list[index] = AudioBuffer(mNumberChannels: 1, mDataByteSize: UInt32(frames * 4), mData: buffer)
         }
-        for index in 0..<4 { attach(input, index, tone: index < 2) }
+        for index in 0..<4 { attach(input, index, tone: leftOnly ? index == 0 : index < 2) }
         for index in 0..<2 { attach(output, index, tone: false) }
 
         for _ in 0..<50 { pipeline.render(input: input.unsafePointer, output: output.unsafeMutablePointer) }
-        let left = storage[4]
-        let meanSquare = (0..<frames).map { Double(left[$0] * left[$0]) }.reduce(0, +) / Double(frames)
-        return 10 * log10(meanSquare)
+        func level(_ buffer: UnsafeMutablePointer<Float32>) -> Double {
+            10 * log10((0..<frames).map { Double(buffer[$0] * buffer[$0]) }.reduce(0, +) / Double(frames) + 1e-20)
+        }
+        return (level(storage[4]), level(storage[5]))
+    }
+
+    private var mono: EffectsSettings {
+        var effects = EffectsSettings()
+        effects.widener.isOn = true
+        effects.widener.width = 0
+        return effects
+    }
+
+    func testAppEffectsProcessOnlyTheirOwnApp() {
+        let dry = outputLevels(leftOnly: true) { _ in }
+        let toneMono = outputLevels(leftOnly: true) { $0.setAppEffects(["tone": self.mono]) }
+        let otherMono = outputLevels(leftOnly: true) { $0.setAppEffects(["silent": self.mono]) }
+        XCTAssertLessThan(dry.right, -100)
+        XCTAssertGreaterThan(toneMono.right, -30)
+        XCTAssertEqual(toneMono.left, toneMono.right, accuracy: 0.1)
+        XCTAssertLessThan(otherMono.right, -100)
+    }
+
+    func testEffectsSwitchBypassesAppEffects() {
+        let bypassed = outputLevels(leftOnly: true) { pipeline in
+            pipeline.setAppEffects(["tone": self.mono])
+            pipeline.setEffects(EffectsSettings(), enabled: false)
+        }
+        XCTAssertLessThan(bypassed.right, -100)
     }
 
     func testAppEQShapesOnlyItsOwnApp() {

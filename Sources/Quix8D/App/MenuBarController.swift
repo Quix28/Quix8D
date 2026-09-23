@@ -55,11 +55,13 @@ final class MenuBarController: ObservableObject {
         }
     }
 
-    /// Master first, then apps playing or with their own EQ.
-    var eqTargets: [AudioApp] {
-        let extra = Set(appEQs.keys).union(eqTarget.map { [$0] } ?? []).filter { id in !audioApps.contains { $0.id == id } }
-        let withEQ = extra.map { knownApps[$0] ?? AudioApp(id: $0) }
-        return (audioApps + withEQ).sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
+    var eqTargets: [AudioApp] { appTargets(with: Set(appEQs.keys), selected: eqTarget) }
+
+    /// Apps playing, plus ones with their own settings or currently selected.
+    private func appTargets(with configured: Set<String>, selected: String?) -> [AudioApp] {
+        let extra = configured.union(selected.map { [$0] } ?? []).filter { id in !audioApps.contains { $0.id == id } }
+        let idle = extra.map { knownApps[$0] ?? AudioApp(id: $0) }
+        return (audioApps + idle).sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
     }
 
     func saveEQPreset(named name: String) {
@@ -140,6 +142,23 @@ final class MenuBarController: ObservableObject {
     @Published var effects = EffectsSettings() {
         didSet { syncPipeline() }
     }
+
+    /// App whose effects the Effects page edits; nil is the master chain.
+    @Published var effectsTarget: String?
+    // Default settings are dropped, so this only holds apps with changes.
+    @Published private(set) var appEffects: [String: EffectsSettings] = [:]
+
+    var selectedEffects: EffectsSettings {
+        get { effectsTarget.map { appEffects[$0] ?? EffectsSettings() } ?? effects }
+        set {
+            guard let target = effectsTarget else { effects = newValue; return }
+            appEffects[target] = newValue == EffectsSettings() ? nil : newValue
+            pipeline.setAppEffects(appEffects)
+            syncPipeline()
+        }
+    }
+
+    var effectsTargets: [AudioApp] { appTargets(with: Set(appEffects.keys), selected: effectsTarget) }
 
     @Published var pan: Double = 0 {
         didSet {
@@ -233,7 +252,7 @@ final class MenuBarController: ObservableObject {
         let playing = AudioApps.current().map(\.app)
         playing.forEach { knownApps[$0.id] = $0 }
         let adjustedIdle = knownApps.values.filter { app in
-            !playing.contains(app) && ((appVolumes[app.id] ?? 1) != 1 || appPositions[app.id] != nil || appEQs[app.id] != nil)
+            !playing.contains(app) && ((appVolumes[app.id] ?? 1) != 1 || appPositions[app.id] != nil || appEQs[app.id] != nil || appEffects[app.id] != nil)
         }
         let apps = (playing + adjustedIdle).sorted { $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending }
         if apps != audioApps { audioApps = apps }
@@ -281,7 +300,7 @@ final class MenuBarController: ObservableObject {
         let hasCustomAppVolume = appVolumes.values.contains { $0 != 1 }
         let hasEQ = isEQOn && (!eq.isFlat || !appEQs.isEmpty)
         if is8DOn || isBoosted || hasCustomAppVolume || hasEQ || isAnalyzerOn || pipeline.pan != 0
-            || (effectsOn && (effects.anyOn || !appPositions.isEmpty)) {
+            || (effectsOn && (effects.anyOn || appEffects.values.contains(where: \.anyOn) || !appPositions.isEmpty)) {
             start()
         } else if isRunning {
             pipeline.stop()

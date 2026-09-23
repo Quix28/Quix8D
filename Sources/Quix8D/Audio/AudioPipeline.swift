@@ -190,6 +190,9 @@ final class AudioPipeline {
         [tapEQCoefficients, frameTapEQCoefficients].forEach { $0.deallocate() }
         [tapEQLeftState, tapEQRightState].forEach { $0.deallocate() }
         [tapScratchLeft, tapScratchRight].forEach { $0.deallocate() }
+        [tapProcessors, frameTapProcessors].forEach { $0.deinitialize(count: Self.maxTaps); $0.deallocate() }
+        [tapEffects, frameTapEffects].forEach { $0.deallocate() }
+        [tapEffectsActive, frameTapEffectsActive].forEach { $0.deallocate() }
     }
     private var lastCallbackTime: CFAbsoluteTime?
     private var hrtfRenderer: HRTFRenderer?
@@ -209,11 +212,51 @@ final class AudioPipeline {
     private var effectsProcessor: EffectsProcessor?
     private var limiter: Limiter?
 
+    // Per-app effects, one processor per tap, run after the app's EQ.
+    private var _appEffects: [String: EffectsSettings] = [:]  // guarded by controlsLock
+    private var _anyTapEffects = false                         // guarded by controlsLock
+    private let tapEffects = AudioPipeline.filled(EffectsSettings(), count: AudioPipeline.maxTaps)  // guarded
+    private let tapEffectsActive = AudioPipeline.filled(false, count: AudioPipeline.maxTaps)        // guarded
+    private let tapProcessors = AudioPipeline.filled(EffectsProcessor?.none, count: AudioPipeline.maxTaps) // guarded
+    private let frameTapEffects = AudioPipeline.filled(EffectsSettings(), count: AudioPipeline.maxTaps)
+    private let frameTapEffectsActive = AudioPipeline.filled(false, count: AudioPipeline.maxTaps)
+    private let frameTapProcessors = AudioPipeline.filled(EffectsProcessor?.none, count: AudioPipeline.maxTaps)
+
     func setEffects(_ effects: EffectsSettings, enabled: Bool) {
         os_unfair_lock_lock(&controlsLock)
         _effects = effects
         _effectsEnabled = enabled
+        publishTapEffectsLocked()
         os_unfair_lock_unlock(&controlsLock)
+    }
+
+    /// Keyed by AudioApp.id; follows the master Effects switch.
+    func setAppEffects(_ effects: [String: EffectsSettings]) {
+        var old = effects
+        os_unfair_lock_lock(&controlsLock)
+        swap(&old, &_appEffects)
+        publishTapEffectsLocked()
+        os_unfair_lock_unlock(&controlsLock)
+        _ = old // released here, outside the lock the audio thread takes
+    }
+
+    /// Caller holds controlsLock.
+    // ponytail: allocates a processor under the lock the first time an app's
+    // effects turn on, which can stall one callback; pre-build off-lock if audible.
+    private func publishTapEffectsLocked() {
+        _anyTapEffects = false
+        for tap in 0..<_tapCount {
+            guard _effectsEnabled, tap < _tapAppIDs.count, let effects = _appEffects[_tapAppIDs[tap]], effects.anyOn else {
+                tapEffectsActive[tap] = false
+                continue
+            }
+            if tapProcessors[tap] == nil {
+                tapProcessors[tap] = EffectsProcessor(sampleRate: _sampleRate)
+            }
+            tapEffects[tap] = effects
+            tapEffectsActive[tap] = true
+            _anyTapEffects = true
+        }
     }
 
     var pan: Float {
@@ -317,6 +360,13 @@ final class AudioPipeline {
             frameEQCoefficients.update(from: eqCoefficients, count: Self.eqBandCount)
             frameEQBandActive.update(from: eqBandActive, count: Self.eqBandCount)
         }
+        if _anyTapEffects {
+            frameTapEffectsActive.update(from: tapEffectsActive, count: _tapCount)
+            frameTapEffects.update(from: tapEffects, count: _tapCount)
+            frameTapProcessors.update(from: tapProcessors, count: _tapCount)
+        } else {
+            frameTapEffectsActive.update(repeating: false, count: _tapCount)
+        }
         if _anyTapEQ {
             frameTapEQActive.update(from: tapEQActive, count: _tapCount)
             frameTapEQCoefficients.update(from: tapEQCoefficients, count: _tapCount * Self.eqBandCount)
@@ -392,11 +442,21 @@ final class AudioPipeline {
         binauralProcessor = nil
         effectsProcessor = nil
         limiter = nil
+        releaseTapProcessors()
         capture.stop()
+    }
+
+    /// IO proc must be stopped, so the audio thread never drops the last reference.
+    private func releaseTapProcessors() {
+        os_unfair_lock_lock(&controlsLock)
+        tapProcessors.update(repeating: nil, count: Self.maxTaps)
+        frameTapProcessors.update(repeating: nil, count: Self.maxTaps)
+        os_unfair_lock_unlock(&controlsLock)
     }
 
     /// Also the benchmark's entry point.
     func prepare(sampleRate: Double, tapAppIDs: [String]) {
+        releaseTapProcessors()
         os_unfair_lock_lock(&controlsLock)
         _tapAppIDs = tapAppIDs
         publishGainsLocked()
@@ -406,6 +466,7 @@ final class AudioPipeline {
         _sampleRate = sampleRate
         publishEQLocked()
         publishTapEQLocked()
+        publishTapEffectsLocked()
         eqLeftState.update(repeating: BiquadState(), count: Self.eqBandCount)
         eqRightState.update(repeating: BiquadState(), count: Self.eqBandCount)
         tapEQLeftState.update(repeating: BiquadState(), count: Self.tapEQStages)
@@ -519,13 +580,20 @@ final class AudioPipeline {
                 outLeft.update(repeating: 0, count: frames)
                 outRight.update(repeating: 0, count: frames)
             }
-            if frameTapEQActive[tap] {
+            if frameTapEQActive[tap] || frameTapEffectsActive[tap] {
                 for frame in 0..<tapFrames {
                     let gain = start + step * Float(frame)
                     tapScratchLeft[frame] = left.samples[frame * left.stride] * gain
                     tapScratchRight[frame] = right.samples[frame * right.stride] * gain
                 }
-                applyTapEQ(tap, frames: tapFrames)
+                if frameTapEQActive[tap] {
+                    applyTapEQ(tap, frames: tapFrames)
+                }
+                if frameTapEffectsActive[tap] {
+                    frameTapProcessors[tap]?.process(
+                        left: (tapScratchLeft, 1, tapFrames), right: (tapScratchRight, 1, tapFrames),
+                        settings: frameTapEffects[tap])
+                }
                 for frame in 0..<tapFrames {
                     outLeft[frame] += tapScratchLeft[frame]
                     outRight[frame] += tapScratchRight[frame]
