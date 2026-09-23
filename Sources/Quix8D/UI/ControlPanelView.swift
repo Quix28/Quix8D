@@ -83,7 +83,7 @@ struct ControlPanelView: View {
             Spacer()
             Toggle("Effects", isOn: $controller.effectsOn)
                 .toggleStyle(PillSwitchStyle(onColor: .green))
-            Button(action: controller.checkForUpdates) {
+            Button { controller.checkForUpdates() } label: {
                 if controller.isCheckingForUpdates {
                     ProgressView().controlSize(.small)
                 } else {

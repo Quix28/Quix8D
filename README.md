@@ -116,6 +116,10 @@ Effects switch in the header turns them all off.
   Then quit and reopen it.
 - **"Quix8D is damaged and can't be opened":** that's the quarantine flag
   on an unnotarized app. Run the `xattr` command from step 3 above.
+- **"Update failed … Read-only file system":** Quix8D was opened straight
+  from the DMG or Downloads, so macOS ran it from a read-only copy. Drag it
+  into Applications and open it from there. From 1.1.004 on, the update
+  button does this for you.
 - **An app is missing from the faders:** it only shows up while it is
   actually playing sound.
 

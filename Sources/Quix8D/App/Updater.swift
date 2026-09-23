@@ -50,6 +50,22 @@ enum Updater {
         return Release(version: version, dmgURL: dmg.browser_download_url)
     }
 
+    private static let lastRunVersionKey = "lastRunVersion"
+
+    /// Message for the first launch after an update, however it was installed;
+    /// nil on first install or a normal launch.
+    static func updateNotice(lastRunVersion: String?, current: String) -> String? {
+        guard let lastRunVersion, isNewer(current, than: lastRunVersion) else { return nil }
+        return "Quix8D is updated to \(current). You're up to date."
+    }
+
+    /// Records this launch's version and returns the notice, if any.
+    static func takeUpdateNotice(defaults: UserDefaults = .standard) -> String? {
+        let notice = updateNotice(lastRunVersion: defaults.string(forKey: lastRunVersionKey), current: currentVersion)
+        defaults.set(currentVersion, forKey: lastRunVersionKey)
+        return notice
+    }
+
     /// Dotted numeric compare: "1.10" is newer than "1.9".
     static func isNewer(_ candidate: String, than current: String) -> Bool {
         let a = candidate.split(separator: ".").map { Int($0) ?? 0 }
@@ -62,11 +78,25 @@ enum Updater {
         return false
     }
 
-    /// Downloads the DMG and replaces the running app. Relaunch afterwards.
+    /// Where the update goes: in place when possible. A copy run from the DMG,
+    /// or one macOS translocated to a read-only path because it was never moved
+    /// out of Downloads, goes to Applications instead.
+    static func installTarget(for bundle: URL, isWritable: (URL) -> Bool = { FileManager.default.isWritableFile(atPath: $0.path) }) -> URL {
+        let folder = bundle.deletingLastPathComponent()
+        let isReadOnlyCopy = bundle.path.contains("/AppTranslocation/") || bundle.path.hasPrefix("/Volumes/")
+        if !isReadOnlyCopy, isWritable(folder) { return bundle }
+        let applications = URL(fileURLWithPath: "/Applications")
+        let folderForApp = isWritable(applications)
+            ? applications
+            : FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications")
+        return folderForApp.appendingPathComponent("Quix8D.app")
+    }
+
+    /// Downloads the DMG and installs it; returns the app to relaunch.
     /// `progress` gets 0...1 while downloading.
-    static func install(_ release: Release, progress: @escaping @MainActor (Double) -> Void) async throws {
-        let installedApp = Bundle.main.bundleURL
-        guard installedApp.pathExtension == "app" else { throw Failure.notInstalled }
+    static func install(_ release: Release, progress: @escaping @MainActor (Double) -> Void) async throws -> URL {
+        guard Bundle.main.bundleURL.pathExtension == "app" else { throw Failure.notInstalled }
+        let installedApp = installTarget(for: Bundle.main.bundleURL)
 
         let workDirectory = FileManager.default.temporaryDirectory.appendingPathComponent("Quix8D-update-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: workDirectory, withIntermediateDirectories: true)
@@ -83,11 +113,18 @@ enum Updater {
         guard FileManager.default.fileExists(atPath: newApp.path) else { throw Failure.appNotFound }
         guard isSignedLikeRunningApp(newApp) else { throw Failure.untrustedSignature }
 
-        // Stage next to the installed app so the swap stays on one volume.
-        let staged = installedApp.deletingLastPathComponent().appendingPathComponent(".Quix8D-update.app")
+        // Stage next to the target so the swap stays on one volume.
+        let folder = installedApp.deletingLastPathComponent()
+        try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
+        let staged = folder.appendingPathComponent(".Quix8D-update.app")
         try? FileManager.default.removeItem(at: staged)
         try run("/usr/bin/ditto", [newApp.path, staged.path])
-        _ = try FileManager.default.replaceItemAt(installedApp, withItemAt: staged)
+        if FileManager.default.fileExists(atPath: installedApp.path) {
+            _ = try FileManager.default.replaceItemAt(installedApp, withItemAt: staged)
+        } else {
+            try FileManager.default.moveItem(at: staged, to: installedApp)
+        }
+        return installedApp
     }
 
     static func download(_ url: URL, to destination: URL, progress: @escaping @MainActor (Double) -> Void) async throws {
@@ -112,10 +149,10 @@ enum Updater {
         await progress(1)
     }
 
-    static func relaunch() {
+    static func relaunch(_ app: URL) {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
-        process.arguments = ["-c", "sleep 1; /usr/bin/open \"$0\"", Bundle.main.bundlePath]
+        process.arguments = ["-c", "sleep 1; /usr/bin/open \"$0\"", app.path]
         try? process.run()
     }
 

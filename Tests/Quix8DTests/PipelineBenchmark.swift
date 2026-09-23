@@ -79,6 +79,12 @@ final class PipelineBenchmark: XCTestCase {
                 p.isAnalyzerOn = true
                 p.setAppVolumes(Dictionary(uniqueKeysWithValues: ids.map { ($0, Float(0.7)) }))
             },
+            Scenario(name: "8D + app EQ on 2 of 8 apps", taps: 8) { p, ids in
+                p.setAppEQs(Dictionary(uniqueKeysWithValues: ids.prefix(2).map { ($0, eq) }))
+            },
+            Scenario(name: "8D + app effects on 2 of 8 apps", taps: 8) { p, ids in
+                p.setAppEffects(Dictionary(uniqueKeysWithValues: ids.prefix(2).map { ($0, everything) }))
+            },
         ] + (ProcessInfo.processInfo.environment["BREAKDOWN"] == "1" ? breakdown : [])
 
         var report = "\nREALTIME COST (% of one core, 48 kHz, 512-frame callbacks)\n"

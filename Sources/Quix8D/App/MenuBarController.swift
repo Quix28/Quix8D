@@ -222,6 +222,13 @@ final class MenuBarController: ObservableObject {
         }
         statusItem.button?.target = self
         statusItem.button?.action = #selector(togglePopover)
+        if let notice = Updater.takeUpdateNotice() {
+            DispatchQueue.main.async { [weak self] in
+                NSApp.activate()
+                self?.showAlert(notice)
+            }
+        }
+        checkForUpdates(quietly: true)
         // Saved positions should sound placed at launch.
         if !appPositions.isEmpty { syncPipeline() }
     }
@@ -349,27 +356,31 @@ final class MenuBarController: ObservableObject {
 
     @Published private(set) var isCheckingForUpdates = false
 
-    func checkForUpdates() {
+    /// `quietly` (the launch check) only speaks up when an update exists.
+    func checkForUpdates(quietly: Bool = false) {
         isCheckingForUpdates = true
         Task { @MainActor in
             defer { isCheckingForUpdates = false }
+            var isInstalling = false
             do {
                 let release = try await Updater.latestRelease()
                 let current = Updater.currentVersion
                 guard Updater.isNewer(release.version, than: current) else {
-                    showAlert("You're up to date (version \(current)).")
+                    if !quietly { showAlert("You're up to date (version \(current)).") }
                     return
                 }
+                if quietly { NSApp.activate() }
                 guard confirm("Quix8D \(release.version) is available. You have \(current).", action: "Install and Restart") else { return }
+                isInstalling = true
                 showStatus("0%")
-                try await Updater.install(release) { [weak self] fraction in
+                let installed = try await Updater.install(release) { [weak self] fraction in
                     self?.showStatus(fraction < 1 ? "\(Int(fraction * 100))%" : "Installing…")
                 }
-                Updater.relaunch()
+                Updater.relaunch(installed)
                 quit()
             } catch {
                 showStatus(nil)
-                showAlert("Update failed: \(error.localizedDescription)")
+                if !quietly || isInstalling { showAlert("Update failed: \(error.localizedDescription)") }
             }
         }
     }

@@ -27,4 +27,30 @@ final class UpdaterTests: XCTestCase {
         XCTAssertEqual(reported.last, 1)
         XCTAssertEqual(reported, reported.sorted())
     }
+
+    func testInstallTargetStaysInPlaceWhenWritable() {
+        let app = URL(fileURLWithPath: "/Applications/Quix8D.app")
+        XCTAssertEqual(Updater.installTarget(for: app) { _ in true }, app)
+    }
+
+    func testReadOnlyCopiesInstallToApplications() {
+        let translocated = URL(fileURLWithPath: "/private/var/folders/lg/x/T/AppTranslocation/E373/d/Quix8D.app")
+        let fromDMG = URL(fileURLWithPath: "/Volumes/Quix8D/Quix8D.app")
+        let target = URL(fileURLWithPath: "/Applications/Quix8D.app")
+        XCTAssertEqual(Updater.installTarget(for: translocated) { _ in true }, target)
+        XCTAssertEqual(Updater.installTarget(for: fromDMG) { _ in true }, target)
+    }
+
+    func testFallsBackToUserApplicationsWithoutAdminRights() {
+        let translocated = URL(fileURLWithPath: "/private/var/folders/x/T/AppTranslocation/A/d/Quix8D.app")
+        let target = Updater.installTarget(for: translocated) { $0.path != "/Applications" }
+        XCTAssertEqual(target.path, FileManager.default.homeDirectoryForCurrentUser.path + "/Applications/Quix8D.app")
+    }
+
+    func testUpdateNoticeOnlyAfterAnUpgrade() {
+        XCTAssertNotNil(Updater.updateNotice(lastRunVersion: "1.1.003", current: "1.1.004"))
+        XCTAssertNil(Updater.updateNotice(lastRunVersion: nil, current: "1.1.004"), "first install")
+        XCTAssertNil(Updater.updateNotice(lastRunVersion: "1.1.004", current: "1.1.004"), "normal launch")
+        XCTAssertNil(Updater.updateNotice(lastRunVersion: "1.2", current: "1.1.004"), "downgrade")
+    }
 }
