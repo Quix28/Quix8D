@@ -320,13 +320,24 @@ final class MenuBarController: ObservableObject {
                     return
                 }
                 guard confirm("Quix8D \(release.version) is available. You have \(current).", action: "Install and Restart") else { return }
-                try await Updater.install(release)
+                showStatus("0%")
+                try await Updater.install(release) { [weak self] fraction in
+                    self?.showStatus(fraction < 1 ? "\(Int(fraction * 100))%" : "Installing…")
+                }
                 Updater.relaunch()
                 quit()
             } catch {
+                showStatus(nil)
                 showAlert("Update failed: \(error.localizedDescription)")
             }
         }
+    }
+
+    /// Text next to the menu bar icon; nil clears it.
+    private func showStatus(_ text: String?) {
+        guard let button = statusItem.button, button.image != nil else { return }
+        button.title = text.map { " \($0)" } ?? ""
+        button.imagePosition = text == nil ? .imageOnly : .imageLeading
     }
 
     private func confirm(_ message: String, action: String) -> Bool {

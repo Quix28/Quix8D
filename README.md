@@ -12,8 +12,9 @@ Use headphones. The effect is built for them.
 
 ## Download and install
 
-1. Download **Quix8D-x.y.dmg** from the
-   [latest release](https://github.com/Quix28/Quix8D/releases/latest).
+1. Download
+   [**Quix8D.dmg**](https://github.com/Quix28/Quix8D/releases/latest/download/Quix8D.dmg)
+   from the [latest release](https://github.com/Quix28/Quix8D/releases/latest).
 2. Open the DMG and drag **Quix8D** onto **Applications**.
 3. Open Quix8D from Applications. The app isn't notarized by Apple, so
    the first launch is blocked with "Apple could not verify…". To allow it:
@@ -117,7 +118,7 @@ Needs Xcode 15.3 or later, or its command line tools.
 
 ```sh
 ./Scripts/build_app_bundle.sh   # builds build/Quix8D.app
-./Scripts/make_dmg.sh           # builds build/Quix8D-<version>.dmg
+./Scripts/make_dmg.sh           # builds build/Quix8D.dmg
 swift test                      # runs the tests
 ```
 

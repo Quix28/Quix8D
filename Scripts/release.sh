@@ -17,7 +17,7 @@ git commit -q -m "chore(release): v$VERSION" -- Resources/Info.plist
 git push -q origin HEAD:main
 
 ./Scripts/make_dmg.sh
-DMG="build/Quix8D-$VERSION.dmg"
+DMG="build/Quix8D.dmg"
 
 [ -d "$PUBLIC_DIR/.git" ] || gh repo clone "$PUBLIC_REPO" "$PUBLIC_DIR"
 git -C "$PUBLIC_DIR" pull -q --ff-only

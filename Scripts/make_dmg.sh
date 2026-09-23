@@ -4,9 +4,8 @@ cd "$(dirname "$0")/.."
 
 ./Scripts/build_app_bundle.sh
 
-VERSION=$(/usr/libexec/PlistBuddy -c "Print CFBundleShortVersionString" Resources/Info.plist)
 STAGING="$HOME/Library/Caches/Quix8D/dmg"
-DMG="build/Quix8D-$VERSION.dmg"
+DMG="build/Quix8D.dmg"
 
 rm -rf "$STAGING" "$DMG"
 mkdir -p "$STAGING"
