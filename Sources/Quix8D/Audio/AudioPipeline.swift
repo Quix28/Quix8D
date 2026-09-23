@@ -96,6 +96,23 @@ final class AudioPipeline {
     private let eqLeftState = AudioPipeline.biquadStates()
     private let eqRightState = AudioPipeline.biquadStates()
 
+    // Per-app EQ, one bank of bands per tap, applied before mixing.
+    private static let tapEQStages = AudioPipeline.maxTaps * AudioPipeline.eqBandCount
+    private var _appEQs: [String: EQSettings] = [:]  // guarded by controlsLock
+    private var _anyTapEQ = false                     // guarded by controlsLock
+    private let tapEQActive = AudioPipeline.filled(false, count: AudioPipeline.maxTaps)          // guarded
+    private let tapEQCoefficients = AudioPipeline.filled(BinauralEffect.Biquad(b0: 1, b1: 0, b2: 0, a1: 0, a2: 0),
+                                                         count: AudioPipeline.tapEQStages)        // guarded
+    private let tapEQBandActive = AudioPipeline.filled(false, count: AudioPipeline.tapEQStages)  // guarded
+    private let frameTapEQActive = AudioPipeline.filled(false, count: AudioPipeline.maxTaps)
+    private let frameTapEQCoefficients = AudioPipeline.filled(BinauralEffect.Biquad(b0: 1, b1: 0, b2: 0, a1: 0, a2: 0),
+                                                              count: AudioPipeline.tapEQStages)
+    private let frameTapEQBandActive = AudioPipeline.filled(false, count: AudioPipeline.tapEQStages)
+    private let tapEQLeftState = AudioPipeline.filled(BiquadState(), count: AudioPipeline.tapEQStages)
+    private let tapEQRightState = AudioPipeline.filled(BiquadState(), count: AudioPipeline.tapEQStages)
+    private let tapScratchLeft = AudioPipeline.filled(Float32(0), count: AudioPipeline.mixCapacity)
+    private let tapScratchRight = AudioPipeline.filled(Float32(0), count: AudioPipeline.mixCapacity)
+
     // Audio thread writes via try-lock (never waits); UI reads under the same lock.
     private var analyzerLock = os_unfair_lock()
     private let analyzerRing = AudioPipeline.silentRing()
@@ -169,6 +186,10 @@ final class AudioPipeline {
         analyzerRing.deallocate()
         eqLeftState.deallocate()
         eqRightState.deallocate()
+        [tapEQActive, frameTapEQActive, tapEQBandActive, frameTapEQBandActive].forEach { $0.deallocate() }
+        [tapEQCoefficients, frameTapEQCoefficients].forEach { $0.deallocate() }
+        [tapEQLeftState, tapEQRightState].forEach { $0.deallocate() }
+        [tapScratchLeft, tapScratchRight].forEach { $0.deallocate() }
     }
     private var lastCallbackTime: CFAbsoluteTime?
     private var hrtfRenderer: HRTFRenderer?
@@ -233,7 +254,35 @@ final class AudioPipeline {
         _eq = eq
         _eqEnabled = enabled
         publishEQLocked()
+        publishTapEQLocked()
         os_unfair_lock_unlock(&controlsLock)
+    }
+
+    /// Keyed by AudioApp.id; follows the master EQ's on/off switch.
+    func setAppEQs(_ eqs: [String: EQSettings]) {
+        var old = eqs
+        os_unfair_lock_lock(&controlsLock)
+        swap(&old, &_appEQs)
+        publishTapEQLocked()
+        os_unfair_lock_unlock(&controlsLock)
+        _ = old // released here, outside the lock the audio thread takes
+    }
+
+    /// Caller holds controlsLock.
+    private func publishTapEQLocked() {
+        _anyTapEQ = false
+        for tap in 0..<_tapCount {
+            guard _eqEnabled, tap < _tapAppIDs.count, let eq = _appEQs[_tapAppIDs[tap]], !eq.isFlat else {
+                tapEQActive[tap] = false
+                continue
+            }
+            tapEQActive[tap] = true
+            _anyTapEQ = true
+            for (index, stage) in eq.stages(sampleRate: _sampleRate).prefix(Self.eqBandCount).enumerated() {
+                tapEQCoefficients[tap * Self.eqBandCount + index] = stage.coefficients
+                tapEQBandActive[tap * Self.eqBandCount + index] = stage.isActive
+            }
+        }
     }
 
     /// Caller holds controlsLock.
@@ -267,6 +316,13 @@ final class AudioPipeline {
         if _eqActive {
             frameEQCoefficients.update(from: eqCoefficients, count: Self.eqBandCount)
             frameEQBandActive.update(from: eqBandActive, count: Self.eqBandCount)
+        }
+        if _anyTapEQ {
+            frameTapEQActive.update(from: tapEQActive, count: _tapCount)
+            frameTapEQCoefficients.update(from: tapEQCoefficients, count: _tapCount * Self.eqBandCount)
+            frameTapEQBandActive.update(from: tapEQBandActive, count: _tapCount * Self.eqBandCount)
+        } else {
+            frameTapEQActive.update(repeating: false, count: _tapCount)
         }
         let effects = _effectsEnabled && _effects.anyOn ? _effects : nil
         return (_speed, _isBypassed, _boost, _tapCount, _eqActive, _isAnalyzerOn, _pan, effects, _slotCount)
@@ -349,8 +405,11 @@ final class AudioPipeline {
         rampGains.update(from: targetGains, count: _tapCount)
         _sampleRate = sampleRate
         publishEQLocked()
+        publishTapEQLocked()
         eqLeftState.update(repeating: BiquadState(), count: Self.eqBandCount)
         eqRightState.update(repeating: BiquadState(), count: Self.eqBandCount)
+        tapEQLeftState.update(repeating: BiquadState(), count: Self.tapEQStages)
+        tapEQRightState.update(repeating: BiquadState(), count: Self.tapEQStages)
         os_unfair_lock_unlock(&controlsLock)
 
         hrtfRenderer = HRTFRenderer(sampleRate: sampleRate)
@@ -460,10 +519,23 @@ final class AudioPipeline {
                 outLeft.update(repeating: 0, count: frames)
                 outRight.update(repeating: 0, count: frames)
             }
-            for frame in 0..<tapFrames {
-                let gain = start + step * Float(frame)
-                outLeft[frame] += left.samples[frame * left.stride] * gain
-                outRight[frame] += right.samples[frame * right.stride] * gain
+            if frameTapEQActive[tap] {
+                for frame in 0..<tapFrames {
+                    let gain = start + step * Float(frame)
+                    tapScratchLeft[frame] = left.samples[frame * left.stride] * gain
+                    tapScratchRight[frame] = right.samples[frame * right.stride] * gain
+                }
+                applyTapEQ(tap, frames: tapFrames)
+                for frame in 0..<tapFrames {
+                    outLeft[frame] += tapScratchLeft[frame]
+                    outRight[frame] += tapScratchRight[frame]
+                }
+            } else {
+                for frame in 0..<tapFrames {
+                    let gain = start + step * Float(frame)
+                    outLeft[frame] += left.samples[frame * left.stride] * gain
+                    outRight[frame] += right.samples[frame * right.stride] * gain
+                }
             }
             rampGains[tap] = frameGains[tap]
         }
@@ -479,6 +551,17 @@ final class AudioPipeline {
                 left: (left.samples, left.stride), leftState: &eqLeftState[band],
                 right: (right.samples, right.stride), rightState: &eqRightState[band],
                 frames: frames, frameEQCoefficients[band])
+        }
+    }
+
+    private func applyTapEQ(_ tap: Int, frames: Int) {
+        for band in 0..<Self.eqBandCount {
+            let stage = tap * Self.eqBandCount + band
+            guard frameTapEQBandActive[stage] else { continue }
+            BiquadState.processStereo(
+                left: (tapScratchLeft, 1), leftState: &tapEQLeftState[stage],
+                right: (tapScratchRight, 1), rightState: &tapEQRightState[stage],
+                frames: frames, frameTapEQCoefficients[stage])
         }
     }
 

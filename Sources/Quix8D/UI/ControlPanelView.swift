@@ -168,12 +168,13 @@ private struct MixPage: View {
             Divider()
             HStack {
                 Text("EQ").font(.headline)
+                targetMenu
                 presetsMenu
                 Spacer()
                 Toggle("RTA", isOn: $controller.isAnalyzerOn)
                     .toggleStyle(.button)
-                Button("Flat") { controller.eq = EQSettings() }
-                    .disabled(controller.eq.isFlat)
+                Button("Flat") { controller.selectedEQ = EQSettings() }
+                    .disabled(controller.selectedEQ.isFlat)
                 Toggle("EQ", isOn: $controller.isEQOn)
                     .toggleStyle(PillSwitchStyle(onColor: .green))
             }
@@ -181,7 +182,7 @@ private struct MixPage: View {
                 saveRow
             }
             EQGraph(
-                eq: $controller.eq,
+                eq: $controller.selectedEQ,
                 isOn: controller.isEQOn,
                 spectrum: controller.spectrum,
                 isAnalyzing: controller.isAnalyzerOn && controller.isRunning && controller.isPanelVisible
@@ -192,6 +193,23 @@ private struct MixPage: View {
 }
 
 extension MixPage {
+    private var targetMenu: some View {
+        let targets = controller.eqTargets
+        let name = targets.first { $0.id == controller.eqTarget }?.name ?? "Master"
+        return Menu(name) {
+            Button("Master") { controller.eqTarget = nil }
+            if !targets.isEmpty {
+                Divider()
+            }
+            ForEach(targets) { app in
+                Button(app.name) { controller.eqTarget = app.id }
+            }
+        }
+        .menuStyle(.borderlessButton)
+        .fixedSize()
+        .accessibilityLabel("EQ for")
+    }
+
     private var presetsMenu: some View {
         Menu("Presets") {
             ForEach(controller.eqPresets) { preset in

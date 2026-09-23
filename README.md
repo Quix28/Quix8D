@@ -90,10 +90,14 @@ Click the **Q** in the menu bar to open the panel.
   Q, double-click to reset it. Drag **HPF**/**LPF** sideways to set the
   cutoff, click to switch them on or off. **Flat** resets the EQ.
   **Presets** saves and loads your EQ settings.
+- **Master / app menu** (next to EQ): pick **Master** to EQ everything,
+  or an app (Chrome, Spotify…) to give it its own EQ. App EQs are applied
+  before the master EQ, and the EQ switch turns them all off together.
 - **RTA:** live spectrum of what's playing, with the peak and the level
   under the cursor.
 
-**Effects page:** six effects, each with its own switch and sliders.
+**Effects page:** six effects, each with its own switch and knobs. The
+**↺** button on a card puts its knobs back to their defaults.
 
 ## Known limitations
 
