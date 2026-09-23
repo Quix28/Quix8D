@@ -4,12 +4,15 @@ cd "$(dirname "$0")/.."
 
 # Build outside Desktop/Documents: iCloud adds Finder metadata that breaks codesign.
 SCRATCH_PATH="$HOME/Library/Caches/Quix8D/build"
-swift build -c release --scratch-path "$SCRATCH_PATH"
+# Universal: runs natively on Apple silicon and Intel.
+ARCHS=(--arch arm64 --arch x86_64)
+swift build -c release "${ARCHS[@]}" --scratch-path "$SCRATCH_PATH"
+BIN_PATH=$(swift build -c release "${ARCHS[@]}" --scratch-path "$SCRATCH_PATH" --show-bin-path)
 
 APP="$SCRATCH_PATH/Quix8D.app"
 rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
-cp "$SCRATCH_PATH/release/Quix8D" "$APP/Contents/MacOS/"
+cp "$BIN_PATH/Quix8D" "$APP/Contents/MacOS/"
 cp Resources/Info.plist "$APP/Contents/Info.plist"
 cp Resources/AppIcon.icns Resources/MenuBarIcon.png Resources/MenuBarIcon@2x.png "$APP/Contents/Resources/"
 

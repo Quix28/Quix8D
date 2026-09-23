@@ -27,7 +27,7 @@ Use headphones. The effect is built for them.
    capture system audio. Click **Allow**. If you missed the prompt, turn
    it on in **System Settings → Privacy & Security → Audio Recording**.
 
-**Requirements:** macOS 14.4 (Sonoma) or later on an Apple silicon Mac.
+**Requirements:** macOS 14.4 (Sonoma) or later, on Apple silicon or Intel.
 
 To uninstall, quit Quix8D (power button in the panel) and move it from
 Applications to the Trash.
