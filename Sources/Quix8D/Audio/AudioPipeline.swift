@@ -180,12 +180,13 @@ final class AudioPipeline {
     /// Rotations per second; positive = clockwise seen from above.
     private var _speed: Double = 0.125
     private var _isBypassed: Bool = false
-    /// Linear gain after effects, soft-limited.
+    /// Linear gain after effects, then peak-limited.
     private var _boost: Float = 1
     private var _pan: Float = 0
     private var _effects = EffectsSettings()   // guarded by controlsLock
     private var _effectsEnabled = true         // guarded by controlsLock
     private var effectsProcessor: EffectsProcessor?
+    private var limiter: Limiter?
 
     func setEffects(_ effects: EffectsSettings, enabled: Bool) {
         os_unfair_lock_lock(&controlsLock)
@@ -334,6 +335,7 @@ final class AudioPipeline {
         hrtfRenderer = nil
         binauralProcessor = nil
         effectsProcessor = nil
+        limiter = nil
         capture.stop()
     }
 
@@ -356,6 +358,7 @@ final class AudioPipeline {
             binauralProcessor = BinauralProcessor(sampleRate: sampleRate)
         }
         effectsProcessor = EffectsProcessor(sampleRate: sampleRate)
+        limiter = Limiter(sampleRate: sampleRate)
     }
 
     func render(input: UnsafePointer<AudioBufferList>, output: UnsafeMutablePointer<AudioBufferList>) {
@@ -427,10 +430,8 @@ final class AudioPipeline {
             Self.applyGain(balance.right, to: rightDestination)
         }
 
-        if controls.boost != 1 {
-            Self.applyBoost(controls.boost, to: leftDestination)
-            Self.applyBoost(controls.boost, to: rightDestination)
-        }
+        // Always on, so EQ and effects can't clip the output either.
+        limiter?.process(left: leftDestination, right: rightDestination, inputGain: controls.boost)
 
         if controls.analyzerOn {
             feedAnalyzer(left: leftDestination, right: rightDestination)
@@ -487,27 +488,6 @@ final class AudioPipeline {
         for frame in 0..<buffer.frames {
             buffer.samples[frame * buffer.stride] *= gain
         }
-    }
-
-    private static func applyBoost(
-        _ gain: Float, to buffer: (samples: UnsafeMutablePointer<Float32>, stride: Int, frames: Int)
-    ) {
-        for frame in 0..<buffer.frames {
-            let index = frame * buffer.stride
-            buffer.samples[index] = softClip(buffer.samples[index] * gain)
-        }
-    }
-
-    /// Transparent below `knee`, then bends smoothly toward ±1.
-    // ponytail: memoryless soft clipper — distorts under heavy boost of loud
-    // material; swap for a look-ahead limiter if that's audible.
-    static func softClip(_ x: Float) -> Float {
-        let knee: Float = 0.8
-        let magnitude = abs(x)
-        guard magnitude > knee else { return x }
-        let headroom = 1 - knee
-        let bent = knee + headroom * tanh((magnitude - knee) / headroom)
-        return x < 0 ? -bent : bent
     }
 
     private static func channelCount(_ list: UnsafeMutableAudioBufferListPointer) -> Int {

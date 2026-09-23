@@ -76,6 +76,16 @@ struct ControlPanelView: View {
             Spacer()
             Toggle("Effects", isOn: $controller.effectsOn)
                 .toggleStyle(PillSwitchStyle(onColor: .green))
+            Button(action: controller.checkForUpdates) {
+                if controller.isCheckingForUpdates {
+                    ProgressView().controlSize(.small)
+                } else {
+                    Image(systemName: "arrow.down.circle").font(.system(size: 15, weight: .semibold))
+                }
+            }
+            .buttonStyle(.borderless)
+            .disabled(controller.isCheckingForUpdates)
+            .accessibilityLabel("Check for updates")
             Button(action: controller.quit) {
                 Image(systemName: "power").font(.system(size: 15, weight: .semibold))
             }

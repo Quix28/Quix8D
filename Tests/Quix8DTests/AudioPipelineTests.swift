@@ -50,17 +50,6 @@ private final class ManagedAtomicBool {
 }
 
 final class OutputGainTests: XCTestCase {
-    func testSoftClipIsTransparentBelowKneeAndNeverExceedsFullScale() {
-        XCTAssertEqual(AudioPipeline.softClip(0.5), 0.5)
-        XCTAssertEqual(AudioPipeline.softClip(-0.8), -0.8)
-        for x: Float in [0.81, 1, 3, 6, 100] {
-            XCTAssertLessThanOrEqual(AudioPipeline.softClip(x), 1)
-            XCTAssertGreaterThan(AudioPipeline.softClip(x), 0.8)
-            XCTAssertEqual(AudioPipeline.softClip(-x), -AudioPipeline.softClip(x))
-        }
-        XCTAssertLessThan(AudioPipeline.softClip(1), AudioPipeline.softClip(3), "stays monotonic")
-    }
-
     func testBalanceLeavesCentreAloneAndFadesTheOtherSide() {
         XCTAssertTrue(AudioPipeline.balanceGains(pan: 0) == (1, 1))
         XCTAssertTrue(AudioPipeline.balanceGains(pan: -1) == (1, 0))

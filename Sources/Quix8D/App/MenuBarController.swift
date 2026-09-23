@@ -306,6 +306,39 @@ final class MenuBarController: ObservableObject {
         showAlert("Still waiting for the system audio-capture permission prompt. Grant it in System Settings > Privacy & Security > Audio Recording, or quit and relaunch by double-clicking the app in Finder — the prompt doesn't route to a Terminal- or IDE-launched process.")
     }
 
+    @Published private(set) var isCheckingForUpdates = false
+
+    func checkForUpdates() {
+        isCheckingForUpdates = true
+        Task { @MainActor in
+            defer { isCheckingForUpdates = false }
+            do {
+                let release = try await Updater.latestRelease()
+                let current = Updater.currentVersion
+                guard Updater.isNewer(release.version, than: current) else {
+                    showAlert("You're up to date (version \(current)).")
+                    return
+                }
+                guard confirm("Quix8D \(release.version) is available. You have \(current).", action: "Install and Restart") else { return }
+                try await Updater.install(release)
+                Updater.relaunch()
+                quit()
+            } catch {
+                showAlert("Update failed: \(error.localizedDescription)")
+            }
+        }
+    }
+
+    private func confirm(_ message: String, action: String) -> Bool {
+        popover.performClose(nil)
+        let alert = NSAlert()
+        alert.messageText = "Quix8D"
+        alert.informativeText = message
+        alert.addButton(withTitle: action)
+        alert.addButton(withTitle: "Later")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+
     private func showAlert(_ message: String) {
         popover.performClose(nil)
         let alert = NSAlert()

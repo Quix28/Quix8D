@@ -74,6 +74,9 @@ Click the **Q** in the menu bar to open the panel.
   Double-click a fader to reset it to 100%.
 - **Effects** switch (top right): off bypasses everything and plays audio
   straight through.
+- **Update** button (top right, arrow): checks for a new version and
+  installs it in place, then restarts. Your settings and audio permission
+  are kept.
 - **Power** button (top right): quits Quix8D.
 - **Output device** (bottom): pick where the sound goes.
 
@@ -124,9 +127,16 @@ permission after every rebuild. If the project is inside an
 iCloud-synced Desktop or Documents folder, run `swift build`/`swift test`
 with `--scratch-path` pointing outside it, or codesign fails.
 
-To publish a release, bump `CFBundleShortVersionString` in
-`Resources/Info.plist`, run `make_dmg.sh`, and attach the DMG to a GitHub
-release.
+To publish an update, commit your changes and run:
+
+```sh
+./Scripts/release.sh 1.1 "What changed"
+```
+
+It bumps the version, builds the DMG, syncs the public repo and creates
+the GitHub release. Installed copies get it through the Update button.
+Releases must be signed with the same certificate, or installed apps
+refuse the update.
 
 ### Project layout
 
@@ -137,5 +147,5 @@ Sources/Quix8D/
   UI/      SwiftUI panel, EQ graph, effects page, spatial map
 Tests/Quix8DTests/   unit tests and an opt-in render benchmark
 Resources/           Info.plist, app icon, menu bar icon, logo
-Scripts/             build and DMG packaging
+Scripts/             build, DMG packaging and release
 ```
