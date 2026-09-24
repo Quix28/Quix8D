@@ -183,7 +183,8 @@ final class MenuBarController: ObservableObject {
         window.backgroundColor = .clear
         window.ignoresMouseEvents = true
         window.level = .statusBar
-        window.collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
+        // fullScreenAuxiliary: without it the panel opens on another Space when a full-screen app is in front.
+        window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         return window
     }()
     private var popoverClosedAt: Date?
@@ -247,6 +248,7 @@ final class MenuBarController: ObservableObject {
         popoverAnchor.orderFront(nil)
         isPanelVisible = true
         popover.show(relativeTo: anchorView.bounds, of: anchorView, preferredEdge: .minY)
+        popover.contentViewController?.view.window?.collectionBehavior.formUnion([.canJoinAllSpaces, .fullScreenAuxiliary])
         NSApp.activate()
     }
 
