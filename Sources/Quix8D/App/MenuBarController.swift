@@ -10,6 +10,8 @@ func startStopButtonState(isRunning: Bool, isStarting: Bool, osSupported: Bool) 
 
 // start() runs off main: it can block on a TCC prompt. After the 10 s timeout
 // the switch stays disabled so a second start() can't race the pending one.
+// Capture runs from launch to quit: starting it mutes apps for about a second,
+// so feature switches only change what render() does.
 final class MenuBarController: ObservableObject {
     // Rotations per second at the knob's ends.
     static let maxSpeed = 0.5
@@ -170,14 +172,14 @@ final class MenuBarController: ObservableObject {
         didSet { pipeline.speed = abs(speed) < Self.stopZone ? 0 : speed }
     }
 
-    private let pipeline = AudioPipeline()
+    private let pipeline: AudioPipeline
     private let systemVolume = SystemVolume()
     private let outputDevices = OutputDevices()
-    private let statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
+    private lazy var statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
     private let popover = NSPopover()
     // Popover re-anchors on resize; with an auto-hiding menu bar the real
     // button is off screen by then, flinging the popover top-left.
-    private let popoverAnchor: NSWindow = {
+    private lazy var popoverAnchor: NSWindow = {
         let window = NSWindow(contentRect: .zero, styleMask: .borderless, backing: .buffered, defer: true)
         window.isOpaque = false
         window.backgroundColor = .clear
@@ -190,7 +192,20 @@ final class MenuBarController: ObservableObject {
     private var popoverClosedAt: Date?
     private var pendingTimeout: DispatchWorkItem?
 
-    init() {
+    /// While on, clicking a control picks it as `midiLearnTarget`.
+    @Published var isMIDILearning = false {
+        didSet { midiLearnTarget = nil }
+    }
+    /// The next CC or note binds to this control.
+    @Published var midiLearnTarget: MIDIControl?
+    @Published private(set) var midiBindings: [MIDIBinding]
+    private let midiDefaults: UserDefaults
+    private var midiInput: MIDIInput?
+
+    init(pipeline: AudioPipeline = AudioPipeline(), midiDefaults: UserDefaults = .standard) {
+        self.pipeline = pipeline
+        self.midiDefaults = midiDefaults
+        midiBindings = MIDIBindings.load(from: midiDefaults)
         speed = pipeline.speed
 
         systemVolume.onChange = { [weak self] volume in
@@ -204,7 +219,10 @@ final class MenuBarController: ObservableObject {
         outputDevices.onChange = { [weak self] in self?.refreshDevices() }
         devices = outputDevices.all
         currentDevice = outputDevices.current
+    }
 
+    /// Menu bar UI, update check and capture; kept out of init so tests skip them.
+    func launch() {
         let hosting = NSHostingController(rootView: ControlPanelView(controller: self))
         hosting.sizingOptions = .preferredContentSize
         popover.contentViewController = hosting
@@ -212,6 +230,7 @@ final class MenuBarController: ObservableObject {
         NotificationCenter.default.addObserver(forName: NSPopover.didCloseNotification, object: popover, queue: .main) { [weak self] _ in
             self?.popoverAnchor.orderOut(nil)
             self?.isPanelVisible = false
+            self?.isMIDILearning = false
             self?.popoverClosedAt = Date()
         }
 
@@ -230,8 +249,8 @@ final class MenuBarController: ObservableObject {
             }
         }
         checkForUpdates(quietly: true)
-        // Saved positions should sound placed at launch.
-        if !appPositions.isEmpty { syncPipeline() }
+        midiInput = MIDIInput { [weak self] in self?.handleMIDI($0) }
+        syncPipeline()
     }
 
     @objc private func togglePopover() {
@@ -306,18 +325,10 @@ final class MenuBarController: ObservableObject {
         pipeline.isBypassed = !(is8DOn && effectsOn)
         pipeline.setEffects(effects, enabled: effectsOn)
         pipeline.setAppPositions(appPositions, enabled: effectsOn)
-        let hasCustomAppVolume = appVolumes.values.contains { $0 != 1 }
-        let hasEQ = isEQOn && (!eq.isFlat || !appEQs.isEmpty)
-        if is8DOn || isBoosted || hasCustomAppVolume || hasEQ || isAnalyzerOn || pipeline.pan != 0
-            || (effectsOn && (effects.anyOn || appEffects.values.contains(where: \.anyOn) || !appPositions.isEmpty)) {
-            start()
-        } else if isRunning {
-            pipeline.stop()
-            isRunning = false
-        }
+        start() // retries after a failed start
     }
 
-    private func start() {
+    func start() {
         guard !isRunning, !isStarting, osSupported else { return }
         isStarting = true
 
@@ -343,17 +354,61 @@ final class MenuBarController: ObservableObject {
         switch result {
         case .success:
             isRunning = true
-            syncPipeline() // switched off while starting?
+            syncPipeline()
         case .failure(let error):
+            // Switches keep their state: resetting them would retry the start in a loop.
             isRunning = false
-            is8DOn = false
-            isBoosted = false
             showAlert("Couldn't start Quix8D: \(error)")
         }
     }
 
     private func handleStartTimeout() {
         showAlert("Still waiting for the system audio-capture permission prompt. Grant it in System Settings > Privacy & Security > Audio Recording, or quit and relaunch by double-clicking the app in Finder — the prompt doesn't route to a Terminal- or IDE-launched process.")
+    }
+
+    func midiTrigger(for control: MIDIControl) -> MIDITrigger? {
+        midiBindings.first { $0.control == control }?.trigger
+    }
+
+    func clearMIDIBindings() {
+        midiBindings = []
+        MIDIBindings.save(midiBindings, to: midiDefaults)
+    }
+
+    /// Learns while a target is picked; otherwise drives the bound control
+    /// through the same setters the panel uses.
+    func handleMIDI(_ message: MIDIMessage) {
+        if let target = midiLearnTarget {
+            // A key can't stand in for a knob.
+            guard message.trigger.kind == .controlChange || !target.isContinuous else { return }
+            midiBindings.removeAll { $0.control == target || $0.trigger == message.trigger }
+            midiBindings.append(MIDIBinding(trigger: message.trigger, control: target))
+            MIDIBindings.save(midiBindings, to: midiDefaults)
+            midiLearnTarget = nil
+            return
+        }
+        guard let control = midiBindings.first(where: { $0.trigger == message.trigger })?.control else { return }
+        let isNote = message.trigger.kind == .note
+        let level = Double(message.value) / 127
+        // Note-ons and button presses toggle; releases (CC < 64) do nothing.
+        let isPress = isNote || message.value >= 64
+        switch control {
+        case .rotation where !isNote: speed = (2 * level - 1) * Self.maxSpeed
+        case .pan where !isNote: pan = 2 * level - 1
+        case .volume where !isNote && isVolumeAdjustable: setVolume(Float(level))
+        case .appVolume(let id) where !isNote:
+            setVolume(FaderTaper.gain(atPosition: Float(level)), for: audioApps.first { $0.id == id } ?? AudioApp(id: id))
+        case .boost: isBoosted = isNote ? !isBoosted : isPress
+        case .eightD where isPress:
+            if startStopButtonState(isRunning: isRunning, isStarting: isStarting, osSupported: osSupported).enabled {
+                is8DOn.toggle()
+            }
+        case .effects where isPress: effectsOn.toggle()
+        case .eq where isPress: isEQOn.toggle()
+        case .analyzer where isPress: isAnalyzerOn.toggle()
+        case .effect(let effect) where isPress: selectedEffects[keyPath: effect.isOn].toggle()
+        default: break
+        }
     }
 
     @Published private(set) var isCheckingForUpdates = false

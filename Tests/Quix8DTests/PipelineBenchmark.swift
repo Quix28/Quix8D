@@ -58,6 +58,7 @@ final class PipelineBenchmark: XCTestCase {
         }
         let scenarios = [
             Scenario(name: "passthrough, 1 app", taps: 1) { p, _ in p.isBypassed = true },
+            Scenario(name: "passthrough, 8 apps", taps: 8) { p, _ in p.isBypassed = true },
             Scenario(name: "8D (HRTF bed), 1 app", taps: 1) { _, _ in },
             Scenario(name: "8D, 8 apps", taps: 8) { _, _ in },
             Scenario(name: "8D + 6 placed of 8 apps", taps: 8) { p, ids in

@@ -23,9 +23,10 @@ Use headphones. The effect is built for them.
    - Or run this once in Terminal:
      `xattr -dr com.apple.quarantine /Applications/Quix8D.app`
 4. A **Q** icon appears in the menu bar. There is no Dock icon.
-5. Click it and switch **8D Audio** on. macOS asks for permission to
-   capture system audio. Click **Allow**. If you missed the prompt, turn
-   it on in **System Settings → Privacy & Security → Audio Recording**.
+5. macOS asks for permission to capture system audio. Click **Allow**.
+   If you missed the prompt, turn it on in **System Settings → Privacy &
+   Security → Audio Recording**. Then click the **Q** and switch
+   **8D Audio** on.
 
 **Requirements:** macOS 14.4 (Sonoma) or later, on Apple silicon or Intel.
 
@@ -40,8 +41,9 @@ apps playing sound ──► per-app capture ──► 8D rotation ──► eff
 ```
 
 1. **Capture.** Quix8D uses Core Audio process taps to take the sound of
-   each app that is playing, one tap per app. The original sound is muted
-   so you only hear the processed version.
+   each app that is playing, one tap per app, plus a spare tap that
+   catches apps that start later. The original sound is muted so you
+   only hear the processed version.
 2. **8D rotation.** Apple's HRTF spatial mixer (the engine behind Spatial
    Audio) moves the sound around your head. Apps you place on the map
    stay put while everything else rotates. With AirPods that support head
@@ -54,8 +56,8 @@ apps playing sound ──► per-app capture ──► 8D rotation ──► eff
    through the output device you picked.
 
 Everything runs locally on your Mac. Nothing is recorded or sent anywhere.
-Audio capture only runs while a feature needs it. The macOS recording
-indicator in the menu bar shows when it is on.
+Audio capture runs while Quix8D is open, so switching features never
+cuts the sound. The macOS recording indicator in the menu bar shows it.
 
 ## Using the app
 
@@ -71,8 +73,9 @@ Click the **Q** in the menu bar to open the panel.
 - **1× / 6×** button: extra gain on top of the Mac's volume,
   soft-limited so it doesn't clip. Mind your ears.
 - **Pan** knob: left/right balance. Double-click to centre.
-- **App faders:** a volume fader for each app playing sound.
-  Double-click a fader to reset it to 100%.
+- **App faders:** a volume fader for each app playing sound, shown in
+  dB. Top is full volume (0 dB), bottom is silent. Double-click a fader
+  to reset it to 0 dB.
 - **Effects** switch (top right): off bypasses everything and plays audio
   straight through.
 - **Update** button (top right, arrow): checks for a new version and
@@ -80,6 +83,7 @@ Click the **Q** in the menu bar to open the panel.
   are kept.
 - **Power** button (top right): quits Quix8D.
 - **Output device** (bottom): pick where the sound goes.
+- **MIDI** button (bottom right, keyboard icon): MIDI Learn, see below.
 
 **Mix page**
 
@@ -102,12 +106,26 @@ Click the **Q** in the menu bar to open the panel.
 while Chrome stays dry. App effects run on that app before mixing; the
 Effects switch in the header turns them all off.
 
+**MIDI controllers:** any MIDI keyboard or controller works, including
+ones plugged in while Quix8D runs. Click the keyboard icon on the main
+page to start MIDI Learn. Each control that MIDI can drive gets a blue
+box showing its current mapping. Click one, then move a knob or fader or
+press a key or pad. Knobs and faders drive Rotation, Pan, Volume, the app
+faders and the 1×/6× boost. Keys, pads and buttons switch 8D, Effects,
+EQ, RTA and each effect on and off. Effect switches act on whatever the
+**Effects for** menu shows. **Clear All** removes every mapping, and
+**Done** leaves Learn. Mappings are remembered. Out of the box, CC 7
+controls Volume and CC 10 controls Pan on channel 1.
+
 ## Known limitations
 
 - Rotation is horizontal only, with no height movement.
 - It's a live effect only. There's no recording or export.
-- When a new app starts playing, you may hear a short blip (about
-  0.1–0.2 s) while Quix8D adds it. It checks for new apps every 1.5 s.
+- An app that starts playing after Quix8D has started goes through
+  8D, effects and EQ right away, but its own fader, EQ, effects and map
+  position need a tap of their own. Within 1.5 s of you setting one,
+  Quix8D rebuilds its capture, which makes a short blip (about
+  0.1–0.2 s).
 
 ## Troubleshooting
 
@@ -154,7 +172,7 @@ refuse the update.
 
 ```
 Sources/Quix8D/
-  App/     app entry, menu bar controller, OS checks
+  App/     app entry, menu bar controller, MIDI input, OS checks
   Audio/   capture, render pipeline, HRTF, effects, EQ, analyzer
   UI/      SwiftUI panel, EQ graph, effects page, spatial map
 Tests/Quix8DTests/   unit tests and an opt-in render benchmark

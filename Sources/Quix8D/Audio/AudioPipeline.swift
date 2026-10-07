@@ -2,7 +2,8 @@ import CoreAudio
 import AudioToolbox
 import Darwin
 
-final class AudioPipeline {
+// Not final: tests override start/stop/restart to count them.
+class AudioPipeline {
     enum Error: Swift.Error {
         case ioProcRegistrationFailed(OSStatus)
         case deviceStartFailed(OSStatus)
@@ -292,6 +293,14 @@ final class AudioPipeline {
         _ = old // released here, outside the lock the audio thread takes
     }
 
+    /// A fader, EQ, effects or map setting only works on an app with its own tap.
+    func hasAppSettings(_ appID: String) -> Bool {
+        os_unfair_lock_lock(&controlsLock)
+        defer { os_unfair_lock_unlock(&controlsLock) }
+        return (_appVolumes[appID] ?? 1) != 1 || !(_appEQs[appID]?.isFlat ?? true)
+            || (_appEffects[appID]?.anyOn ?? false) || _appPositions[appID] != nil
+    }
+
     func setEQ(_ eq: EQSettings, enabled: Bool) {
         os_unfair_lock_lock(&controlsLock)
         _eq = eq
@@ -415,11 +424,16 @@ final class AudioPipeline {
             throw error
         }
 
-        // Poll for new apps: no reliable property listener on macOS 26.
+        // Poll for new apps: no reliable property listener on macOS 26. The
+        // spare tap already plays them, so only rebuild (a short blip) to give
+        // an app with its own settings its own tap.
         let timer = DispatchSource.makeTimerSource(queue: controlQueue)
         timer.schedule(deadline: .now() + 1.5, repeating: 1.5)
         timer.setEventHandler { [weak self] in
-            guard let self, self.capture.hasNewUnmutedProcess() else { return }
+            guard let self else { return }
+            let newApps = self.capture.appsWithoutOwnTap()
+            guard self.capture.hasSpareTap ? newApps.contains(where: self.hasAppSettings) : !newApps.isEmpty
+            else { return }
             let currentSpeed = self.speed
             self.stopLocked()
             try? self.startLocked(speed: currentSpeed)

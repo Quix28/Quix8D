@@ -8,6 +8,9 @@ struct ControlPanelView: View {
     var body: some View {
         VStack(spacing: 20) {
             header
+            if controller.isMIDILearning {
+                midiLearnBar
+            }
             switch controller.page {
             case .main: mainPage
             case .mix: MixPage(controller: controller)
@@ -23,6 +26,7 @@ struct ControlPanelView: View {
         }
         .padding(16)
         .frame(width: controller.page == .main ? 320 : 520)
+        .environmentObject(controller)
         .onAppear { controller.refreshAudioApps() }
         .onChange(of: controller.page) { _, _ in controller.refreshAudioApps() }
         .onReceive(appRefresh) { _ in
@@ -40,7 +44,9 @@ struct ControlPanelView: View {
                     valueText: "\(Int((controller.volume * 100).rounded()))%"
                 )
                 .disabled(!controller.isVolumeAdjustable)
+                .midiLearnable(.volume)
                 boostButton
+                    .midiLearnable(.boost)
             }
 
             VStack(spacing: 10) {
@@ -52,7 +58,9 @@ struct ControlPanelView: View {
                     valueText: rotationText,
                     resetValue: 0
                 )
+                .midiLearnable(.rotation)
                 audioSwitch
+                    .midiLearnable(.eightD)
             }
 
             Knob(
@@ -63,11 +71,21 @@ struct ControlPanelView: View {
                 valueText: panText,
                 resetValue: 0
             )
+            .midiLearnable(.pan)
         }
         Divider()
         AppFaders(controller: controller)
         Divider()
-        deviceMenu
+        HStack {
+            deviceMenu
+            Button { controller.isMIDILearning.toggle() } label: {
+                Image(systemName: "pianokeys").font(.system(size: 15, weight: .semibold))
+                    .foregroundStyle(controller.isMIDILearning ? Color.accentColor : Color.primary)
+            }
+            .buttonStyle(.borderless)
+            .accessibilityLabel("MIDI Learn")
+            .accessibilityValue(controller.isMIDILearning ? "On" : "Off")
+        }
     }
 
     private var header: some View {
@@ -83,6 +101,7 @@ struct ControlPanelView: View {
             Spacer()
             Toggle("Effects", isOn: $controller.effectsOn)
                 .toggleStyle(PillSwitchStyle(onColor: .green))
+                .midiLearnable(.effects)
             Button { controller.checkForUpdates() } label: {
                 if controller.isCheckingForUpdates {
                     ProgressView().controlSize(.small)
@@ -100,6 +119,21 @@ struct ControlPanelView: View {
             .keyboardShortcut("q")
             .accessibilityLabel("Quit")
         }
+    }
+
+    private var midiLearnBar: some View {
+        HStack {
+            Text(controller.midiLearnTarget.map { "Move a knob, fader or key for \($0.name)." }
+                 ?? "Click a control, then move a knob, fader or key.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Button("Clear All", action: controller.clearMIDIBindings)
+                .disabled(controller.midiBindings.isEmpty)
+            Button("Done") { controller.isMIDILearning = false }
+                .keyboardShortcut(.cancelAction)
+        }
+        .controlSize(.small)
     }
 
     private var audioSwitch: some View {
@@ -200,10 +234,12 @@ private struct MixPage: View {
                 Spacer()
                 Toggle("RTA", isOn: $controller.isAnalyzerOn)
                     .toggleStyle(.button)
+                    .midiLearnable(.analyzer)
                 Button("Flat") { controller.selectedEQ = EQSettings() }
                     .disabled(controller.selectedEQ.isFlat)
                 Toggle("EQ", isOn: $controller.isEQOn)
                     .toggleStyle(PillSwitchStyle(onColor: .green))
+                    .midiLearnable(.eq)
             }
             if presetName != nil {
                 saveRow
@@ -291,16 +327,17 @@ private struct AppFaders: View {
 
     private func column(for app: AudioApp) -> some View {
         let volume = controller.volume(for: app)
-        let percent = "\(Int((volume * 100).rounded()))%"
+        let level = FaderTaper.text(forGain: volume)
         return VStack(spacing: 6) {
-            Text(percent)
+            Text(level)
                 .font(.caption2.monospacedDigit())
                 .foregroundStyle(.secondary)
             VerticalFader(value: Binding(
-                get: { controller.volume(for: app) },
-                set: { controller.setVolume($0, for: app) }
+                get: { FaderTaper.position(ofGain: controller.volume(for: app)) },
+                set: { controller.setVolume(FaderTaper.gain(atPosition: $0), for: app) }
             ))
             .frame(height: 110)
+            .midiLearnable(.appVolume(app.id))
             Image(nsImage: app.icon)
                 .resizable()
                 .frame(width: 22, height: 22)
@@ -312,11 +349,30 @@ private struct AppFaders: View {
         .frame(width: Self.columnWidth)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel("\(app.name) volume")
-        .accessibilityValue(percent)
+        .accessibilityValue(level)
         .accessibilityAdjustableAction { direction in
             let step: Float = direction == .increment ? 0.05 : -0.05
-            controller.setVolume(min(max(volume + step, 0), 1), for: app)
+            controller.setVolume(FaderTaper.gain(atPosition: FaderTaper.position(ofGain: volume) + step), for: app)
         }
+    }
+}
+
+/// App fader position (0 bottom, 1 top) to linear gain. Each halving of
+/// travel is −10 dB, about half as loud: top 0 dB, half −10 dB, 10% −33 dB,
+/// bottom silent.
+enum FaderTaper {
+    private static let exponent = log2(Float(10)) / 2
+
+    static func gain(atPosition position: Float) -> Float {
+        pow(min(max(position, 0), 1), exponent)
+    }
+
+    static func position(ofGain gain: Float) -> Float {
+        pow(min(max(gain, 0), 1), 1 / exponent)
+    }
+
+    static func text(forGain gain: Float) -> String {
+        gain > 0 ? "\(Int((20 * log10(gain)).rounded())) dB" : "−∞ dB"
     }
 }
 
@@ -354,6 +410,44 @@ struct VerticalFader: View {
             )
             .simultaneousGesture(TapGesture(count: 2).onEnded { value = 1 })
         }
+    }
+}
+
+/// In MIDI Learn mode, covers the control: a click picks it, the label shows its binding.
+private struct MIDILearnable: ViewModifier {
+    @EnvironmentObject private var controller: MenuBarController
+    let control: MIDIControl
+
+    func body(content: Content) -> some View {
+        content.overlay {
+            if controller.isMIDILearning {
+                let isTarget = controller.midiLearnTarget == control
+                let label = isTarget ? "Move…" : controller.midiTrigger(for: control)?.label ?? "—"
+                RoundedRectangle(cornerRadius: 6)
+                    .fill(Color.accentColor.opacity(isTarget ? 0.35 : 0.12))
+                    .overlay(RoundedRectangle(cornerRadius: 6).stroke(Color.accentColor, lineWidth: isTarget ? 2 : 1))
+                    .overlay {
+                        Text(label)
+                            .font(.system(size: 9, weight: .semibold).monospacedDigit())
+                            .fixedSize()
+                            .padding(.horizontal, 3)
+                            .background(Capsule().fill(Color(nsColor: .windowBackgroundColor).opacity(0.9)))
+                    }
+                    .contentShape(Rectangle())
+                    .onTapGesture { controller.midiLearnTarget = control }
+                    .accessibilityElement(children: .ignore)
+                    .accessibilityLabel("Learn MIDI for \(control.name)")
+                    .accessibilityValue(label)
+                    .accessibilityAddTraits(.isButton)
+                    .accessibilityAction { controller.midiLearnTarget = control }
+            }
+        }
+    }
+}
+
+extension View {
+    func midiLearnable(_ control: MIDIControl) -> some View {
+        modifier(MIDILearnable(control: control))
     }
 }
 

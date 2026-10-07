@@ -11,7 +11,10 @@ final class ProcessTapCapture {
 
     private(set) var tapIDs: [AudioObjectID] = []
     /// Tap i is stereo pair i of the tap inputs (after any sub-device inputs).
+    /// The spare tap, last, has app ID "".
     private(set) var tapAppIDs: [String] = []
+    /// Catches every process without its own tap, so apps that start later are heard at once.
+    private(set) var hasSpareTap = false
     static let aggregateUID = "com.quix28.quix8d.aggregate"
     private(set) var aggregateDeviceID: AudioObjectID?
 
@@ -30,19 +33,28 @@ final class ProcessTapCapture {
         return status == noErr ? rate : nil
     }
 
-    /// Taps specific processes, not globally: a global `.mutedWhenTapped`
-    /// tap mutes the physical device, including our own output.
+    /// The spare tap must exclude this process: a global `.mutedWhenTapped`
+    /// tap that includes it silences our own output too.
     func start() throws -> AudioDeviceID {
         guard tapIDs.isEmpty else { throw Error.tapCreationFailed(-1) }
         guard #available(macOS 14.2, *) else { throw Error.tapCreationFailed(-1) }
 
-        // One tap per app for per-app volume; an empty tap keeps the aggregate valid.
-        var groups = AudioApps.current().map { (id: $0.app.id, processes: $0.processes) }
-        if groups.isEmpty { groups = [(id: "", processes: [])] }
+        // One tap per playing app for per-app controls.
+        let groups = AudioApps.current().map { (id: $0.app.id, processes: $0.processes) }
+        tappedProcessIDs = Set(groups.flatMap(\.processes))
+        var taps = groups.map { (id: $0.id, description: CATapDescription(stereoMixdownOfProcesses: $0.processes)) }
+        if let ownProcess = Self.processObject(for: ProcessInfo.processInfo.processIdentifier) {
+            taps.append((id: "", description: CATapDescription(
+                stereoGlobalTapButExcludeProcesses: Array(tappedProcessIDs) + [ownProcess])))
+            hasSpareTap = true
+        } else if taps.isEmpty {
+            // An empty tap keeps the aggregate valid.
+            taps.append((id: "", description: CATapDescription(stereoMixdownOfProcesses: [])))
+        }
 
         var tapUIDs: [String] = []
-        for group in groups {
-            let description = CATapDescription(stereoMixdownOfProcesses: group.processes)
+        for tap in taps {
+            let description = tap.description
             description.muteBehavior = .mutedWhenTapped
             var newTapID: AudioObjectID = 0
             let tapStatus = AudioHardwareCreateProcessTap(description, &newTapID)
@@ -51,10 +63,9 @@ final class ProcessTapCapture {
                 throw Error.tapCreationFailed(tapStatus)
             }
             tapIDs.append(newTapID)
-            tapAppIDs.append(group.id)
+            tapAppIDs.append(tap.id)
             tapUIDs.append(description.uuid.uuidString)
         }
-        tappedProcessIDs = Set(groups.flatMap(\.processes))
 
         guard let outputDeviceID = Self.defaultOutputDeviceID() else {
             stop()
@@ -106,11 +117,29 @@ final class ProcessTapCapture {
         tapIDs = []
         tapAppIDs = []
         tappedProcessIDs = []
+        hasSpareTap = false
     }
 
-    /// Polled: Apple's property listener for this is unreliable on macOS 26.
-    func hasNewUnmutedProcess() -> Bool {
-        !Set(Self.currentAudioProcesses().map(\.object)).subtracting(tappedProcessIDs).isEmpty
+    /// Apps playing through a process with no tap of its own: in the spare
+    /// tap, or unmuted without one. Polled: Apple's property listener for
+    /// this is unreliable on macOS 26.
+    func appsWithoutOwnTap() -> Set<String> {
+        Set(Self.currentAudioProcesses().filter { !tappedProcessIDs.contains($0.object) }.compactMap { AudioApp(pid: $0.pid)?.id })
+    }
+
+    static func processObject(for pid: pid_t) -> AudioObjectID? {
+        var pid = pid
+        var object = AudioObjectID(kAudioObjectUnknown)
+        var size = UInt32(MemoryLayout<AudioObjectID>.size)
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyTranslatePIDToProcessObject,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        let status = AudioObjectGetPropertyData(
+            AudioObjectID(kAudioObjectSystemObject), &address, UInt32(MemoryLayout<pid_t>.size), &pid, &size, &object
+        )
+        return status == noErr && object != kAudioObjectUnknown ? object : nil
     }
 
     static func currentAudioProcesses() -> [(object: AudioObjectID, pid: pid_t)] {

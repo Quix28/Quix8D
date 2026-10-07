@@ -24,3 +24,36 @@ final class VerticalFaderTests: XCTestCase {
         XCTAssertEqual(VerticalFader.value(atY: 400, height: 150), 0)
     }
 }
+
+final class FaderTaperTests: XCTestCase {
+    func testEndpointsAreUnityAndSilence() {
+        XCTAssertEqual(FaderTaper.gain(atPosition: 1), 1)
+        XCTAssertEqual(FaderTaper.gain(atPosition: 0), 0)
+        XCTAssertEqual(FaderTaper.position(ofGain: 1), 1)
+        XCTAssertEqual(FaderTaper.position(ofGain: 0), 0)
+        XCTAssertEqual(FaderTaper.gain(atPosition: 1.5), 1)
+        XCTAssertEqual(FaderTaper.gain(atPosition: -0.5), 0)
+    }
+
+    func testPositionGainPositionRoundTrips() {
+        for step in 0...100 {
+            let position = Float(step) / 100
+            XCTAssertEqual(FaderTaper.position(ofGain: FaderTaper.gain(atPosition: position)), position, accuracy: 1e-5)
+        }
+    }
+
+    func testTaperIsMonotonicAndHalvingTravelIsMinus10dB() {
+        let gains = (0...1_000).map { FaderTaper.gain(atPosition: Float($0) / 1_000) }
+        XCTAssertTrue(zip(gains, gains.dropFirst()).allSatisfy { $0 < $1 })
+        XCTAssertEqual(20 * log10(FaderTaper.gain(atPosition: 0.5)), -10, accuracy: 0.01)
+        XCTAssertEqual(20 * log10(FaderTaper.gain(atPosition: 0.25)), -20, accuracy: 0.01)
+        XCTAssertEqual(20 * log10(FaderTaper.gain(atPosition: 0.1)), -33.2, accuracy: 0.1)
+    }
+
+    func testReadoutShowsDecibels() {
+        XCTAssertEqual(FaderTaper.text(forGain: 1), "0 dB")
+        XCTAssertEqual(FaderTaper.text(forGain: 0.999), "0 dB")
+        XCTAssertEqual(FaderTaper.text(forGain: 0.5), "-6 dB")
+        XCTAssertEqual(FaderTaper.text(forGain: 0), "−∞ dB")
+    }
+}

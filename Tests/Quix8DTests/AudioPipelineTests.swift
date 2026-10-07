@@ -56,3 +56,44 @@ final class OutputGainTests: XCTestCase {
         XCTAssertTrue(AudioPipeline.balanceGains(pan: 0.5) == (0.5, 1))
     }
 }
+
+final class SpareTapTests: XCTestCase {
+    /// Apps without settings stay in the spare tap; others get rebuilt into their own.
+    func testOnlyAppsWithSettingsNeedTheirOwnTap() {
+        let pipeline = AudioPipeline()
+        XCTAssertFalse(pipeline.hasAppSettings("app"))
+
+        pipeline.setAppVolumes(["app": 1])
+        XCTAssertFalse(pipeline.hasAppSettings("app"), "a fader at 0 dB")
+        pipeline.setAppVolumes(["app": 0.5])
+        XCTAssertTrue(pipeline.hasAppSettings("app"))
+        XCTAssertFalse(pipeline.hasAppSettings("other"))
+        pipeline.setAppVolumes([:])
+
+        var cut = EQSettings()
+        cut.bands[0].gainDb = -6
+        pipeline.setAppEQs(["app": EQSettings()])
+        XCTAssertFalse(pipeline.hasAppSettings("app"), "a flat EQ")
+        pipeline.setAppEQs(["app": cut])
+        XCTAssertTrue(pipeline.hasAppSettings("app"))
+        pipeline.setAppEQs([:])
+
+        var effects = EffectsSettings()
+        effects.reverb.mix = 0.9
+        pipeline.setAppEffects(["app": effects])
+        XCTAssertFalse(pipeline.hasAppSettings("app"), "effects all switched off")
+        effects.reverb.isOn = true
+        pipeline.setAppEffects(["app": effects])
+        XCTAssertTrue(pipeline.hasAppSettings("app"))
+        pipeline.setAppEffects([:])
+
+        pipeline.setAppPositions(["app": AppPosition(azimuth: 90)], enabled: true)
+        XCTAssertTrue(pipeline.hasAppSettings("app"))
+    }
+
+    /// The spare tap needs this process's object to exclude it; without one it isn't built.
+    func testFindsOwnProcessObject() {
+        XCTAssertNotNil(ProcessTapCapture.processObject(for: ProcessInfo.processInfo.processIdentifier))
+        XCTAssertNil(ProcessTapCapture.processObject(for: -1))
+    }
+}
