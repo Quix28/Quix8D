@@ -227,6 +227,11 @@ final class MenuBarController: ObservableObject {
         hosting.sizingOptions = .preferredContentSize
         popover.contentViewController = hosting
         popover.behavior = .transient
+        // Before the window is ordered in: on the first open it doesn't exist earlier,
+        // and set after show the panel lands on another Space over full-screen apps.
+        NotificationCenter.default.addObserver(forName: NSPopover.willShowNotification, object: popover, queue: .main) { [weak self] _ in
+            self?.popover.contentViewController?.view.window?.collectionBehavior.formUnion([.canJoinAllSpaces, .fullScreenAuxiliary])
+        }
         NotificationCenter.default.addObserver(forName: NSPopover.didCloseNotification, object: popover, queue: .main) { [weak self] _ in
             self?.popoverAnchor.orderOut(nil)
             self?.isPanelVisible = false
@@ -267,7 +272,6 @@ final class MenuBarController: ObservableObject {
         popoverAnchor.orderFront(nil)
         isPanelVisible = true
         popover.show(relativeTo: anchorView.bounds, of: anchorView, preferredEdge: .minY)
-        popover.contentViewController?.view.window?.collectionBehavior.formUnion([.canJoinAllSpaces, .fullScreenAuxiliary])
         NSApp.activate()
     }
 
