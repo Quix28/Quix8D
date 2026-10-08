@@ -179,7 +179,10 @@ final class MenuBarController: ObservableObject {
     private let popover = NSPopover()
     // Popover re-anchors on resize; with an auto-hiding menu bar the real
     // button is off screen by then, flinging the popover top-left.
-    private lazy var popoverAnchor: NSWindow = {
+    // A fresh one per open: a reused one can end up tied to one Space despite
+    // canJoinAllSpaces, and activating then jumps to that Space.
+    private var popoverAnchor: NSWindow?
+    private static func makePopoverAnchor() -> NSWindow {
         let window = NSWindow(contentRect: .zero, styleMask: .borderless, backing: .buffered, defer: true)
         window.isOpaque = false
         window.backgroundColor = .clear
@@ -188,7 +191,7 @@ final class MenuBarController: ObservableObject {
         // fullScreenAuxiliary: without it the panel opens on another Space when a full-screen app is in front.
         window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary, .stationary, .ignoresCycle]
         return window
-    }()
+    }
     private var popoverClosedAt: Date?
     private var pendingTimeout: DispatchWorkItem?
 
@@ -233,7 +236,8 @@ final class MenuBarController: ObservableObject {
             self?.popover.contentViewController?.view.window?.collectionBehavior.formUnion([.canJoinAllSpaces, .fullScreenAuxiliary])
         }
         NotificationCenter.default.addObserver(forName: NSPopover.didCloseNotification, object: popover, queue: .main) { [weak self] _ in
-            self?.popoverAnchor.orderOut(nil)
+            self?.popoverAnchor?.orderOut(nil)
+            self?.popoverAnchor = nil
             self?.isPanelVisible = false
             self?.isMIDILearning = false
             self?.popoverClosedAt = Date()
@@ -265,11 +269,13 @@ final class MenuBarController: ObservableObject {
             popover.performClose(nil)
             return
         }
+        let anchor = Self.makePopoverAnchor()
         guard let button = statusItem.button, let buttonWindow = button.window,
-              let anchorView = popoverAnchor.contentView
+              let anchorView = anchor.contentView
         else { return }
-        popoverAnchor.setFrame(buttonWindow.convertToScreen(button.convert(button.bounds, to: nil)), display: false)
-        popoverAnchor.orderFront(nil)
+        popoverAnchor = anchor
+        anchor.setFrame(buttonWindow.convertToScreen(button.convert(button.bounds, to: nil)), display: false)
+        anchor.orderFront(nil)
         isPanelVisible = true
         popover.show(relativeTo: anchorView.bounds, of: anchorView, preferredEdge: .minY)
         NSApp.activate()
