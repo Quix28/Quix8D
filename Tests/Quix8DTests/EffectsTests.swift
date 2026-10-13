@@ -32,6 +32,13 @@ final class EffectsTests: XCTestCase {
         XCTAssertEqual(out[echo], 1, accuracy: 0.01)
     }
 
+    func testReverbGraphTailGrowsWithSize() {
+        let small = EffectGraph.reverbEnvelope(.init(isOn: true, mix: 1, size: 0.1), seconds: 4, columns: 40)
+        let large = EffectGraph.reverbEnvelope(.init(isOn: true, mix: 1, size: 1), seconds: 4, columns: 40)
+        XCTAssertEqual(small.count, 40)
+        XCTAssertGreaterThan(large[20], small[20] * 10, "2 s in, a big room still rings")
+    }
+
     func testReverbTailDecaysEvenAtMaxSize() {
         var settings = EffectsSettings()
         settings.reverb = .init(isOn: true, mix: 1, size: 1, damping: 0)
