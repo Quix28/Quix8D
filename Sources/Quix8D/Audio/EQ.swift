@@ -32,6 +32,31 @@ struct EQPreset: Codable, Equatable, Identifiable {
     var name: String
     var settings: EQSettings
     var id: String { name }
+
+    /// Shipped with the app: not stored, so they can't be deleted.
+    /// Gains follow `EQ.defaultBands`: 32, 80, 200, 500, 1.2k, 3k, 7k, 14k Hz.
+    static let builtIn = [
+        builtIn("Bass Boost", gains: [5, 6, 2, 0, 0, 0, 0, 0]),
+        builtIn("Heavy Bass", gains: [7, 8, 3, -1, 0, 0, 0, 0]),
+        builtIn("Sub Bass", gains: [7, 2, 0, 0, 0, 0, 0, 0]),
+        // Small speakers can't play deep bass; boost what they can, cut the rest.
+        builtIn("Laptop Bass", gains: [0, 4, 3, -1, 0, 1, 0, 0], highPass: 45),
+        builtIn("Warm", gains: [2, 3, 2, 0, 0, -1, -2, -2]),
+        builtIn("V-Shape", gains: [4, 3, 0, -2, -2, 0, 3, 4]),
+        builtIn("Vocal", gains: [0, 0, -2, 0, 2, 3, 1, 0], highPass: 90),
+        builtIn("Bright", gains: [0, 0, 0, 0, 0, 1, 3, 5]),
+    ]
+
+    private static func builtIn(_ name: String, gains: [Double], highPass: Double? = nil) -> EQPreset {
+        var settings = EQSettings()
+        for index in settings.bands.indices {
+            settings.bands[index].gainDb = gains[index]
+        }
+        if let highPass {
+            settings.highPass = EQFilter(frequency: highPass, isOn: true)
+        }
+        return EQPreset(name: name, settings: settings)
+    }
 }
 
 enum EQPresetStore {

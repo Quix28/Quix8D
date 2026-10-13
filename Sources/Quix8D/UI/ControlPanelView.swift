@@ -258,6 +258,10 @@ private struct MixPage: View {
 extension MixPage {
     private var presetsMenu: some View {
         Menu("Presets") {
+            ForEach(EQPreset.builtIn) { preset in
+                Button(preset.name) { controller.loadEQPreset(preset) }
+            }
+            Divider()
             ForEach(controller.eqPresets) { preset in
                 Button(preset.name) { controller.loadEQPreset(preset) }
             }

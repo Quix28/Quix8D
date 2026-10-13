@@ -80,6 +80,14 @@ final class EQTests: XCTestCase {
         XCTAssertEqual(EQPresetStore.load(from: defaults), [EQPreset(name: "Warm", settings: boosted)])
     }
 
+    func testBassBoostPresetBoostsOnlyBass() throws {
+        let bass = try XCTUnwrap(EQPreset.builtIn.first { $0.name == "Bass Boost" })
+        let stages = bass.settings.stages(sampleRate: 48_000).filter(\.isActive).map(\.coefficients)
+        XCTAssertGreaterThan(EQ.responseDb(of: stages, at: 60, sampleRate: 48_000), 5)
+        XCTAssertEqual(EQ.responseDb(of: stages, at: 3_000, sampleRate: 48_000), 0, accuracy: 0.5)
+        XCTAssertEqual(Set(EQPreset.builtIn.map(\.name)).count, EQPreset.builtIn.count, "names are menu IDs")
+    }
+
     func testStereoBiquadMatchesPerSampleFilter() {
         let c = BinauralEffect.peakingCoefficients(centerHz: 1_000, gainDb: 6, q: 2, sampleRate: 48_000)
         let input = (0..<300).map { Float32(sin(Double($0) * 0.37)) }
