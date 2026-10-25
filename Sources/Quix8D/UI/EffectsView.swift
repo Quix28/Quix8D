@@ -19,35 +19,50 @@ struct EffectsPage: View {
 
     private var grid: some View {
         LazyVGrid(columns: columns, spacing: 10) {
+            ForEach(effects.order.sequence, id: \.self) { effect in
+                cardView(effect)
+            }
+        }
+        .opacity(isEnabled ? 1 : 0.5)
+    }
+
+    @ViewBuilder
+    private func cardView(_ effect: EffectSwitch) -> some View {
+        switch effect {
+        case .reverb:
             card("Reverb", .reverb, isOn: $effects.reverb.isOn, reset: { effects.reverb = .init(isOn: effects.reverb.isOn) }) {
                 SmallKnob("Mix", $effects.reverb.mix, 0...1, percent: true)
                 SmallKnob("Size", $effects.reverb.size, 0...1, percent: true)
                 SmallKnob("Tone", $effects.reverb.damping, 0...1) { "\(Int(((1 - $0) * 100).rounded()))%" }
             }
+        case .compressor:
             card("Compressor", .compressor, isOn: $effects.compressor.isOn, reset: { effects.compressor = .init(isOn: effects.compressor.isOn) }) {
                 SmallKnob("Thresh", $effects.compressor.threshold, -40...0) { String(format: "%.0f dB", $0) }
                 SmallKnob("Ratio", $effects.compressor.ratio, 1...20) { String(format: "%.1f:1", $0) }
                 SmallKnob("Makeup", $effects.compressor.makeup, 0...18) { String(format: "+%.0f dB", $0) }
             }
+        case .delay:
             card("Delay", .delay, isOn: $effects.delay.isOn, reset: { effects.delay = .init(isOn: effects.delay.isOn) }) {
                 SmallKnob("Time", $effects.delay.time, 0.02...1.5) { "\(Int(($0 * 1_000).rounded())) ms" }
                 SmallKnob("Feedback", $effects.delay.feedback, 0...0.9, percent: true)
                 SmallKnob("Mix", $effects.delay.mix, 0...1, percent: true)
             }
+        case .widener:
             card("Widener", .widener, isOn: $effects.widener.isOn, reset: { effects.widener = .init(isOn: effects.widener.isOn) }) {
                 SmallKnob("Width", $effects.widener.width, 0...2, percent: true, reset: 1)
             }
+        case .bass:
             card("Bass", .bass, isOn: $effects.bassEnhancer.isOn, reset: { effects.bassEnhancer = .init(isOn: effects.bassEnhancer.isOn) }) {
                 SmallKnob("Amount", $effects.bassEnhancer.amount, 0...1, percent: true)
                 SmallKnob("Freq", $effects.bassEnhancer.frequency, 60...250) { "\(Int($0.rounded())) Hz" }
             }
+        case .chorus:
             card("Chorus", .chorus, isOn: $effects.chorus.isOn, reset: { effects.chorus = .init(isOn: effects.chorus.isOn) }) {
                 SmallKnob("Rate", $effects.chorus.rate, 0.1...5) { String(format: "%.1f Hz", $0) }
                 SmallKnob("Depth", $effects.chorus.depth, 0...1, percent: true)
                 SmallKnob("Mix", $effects.chorus.mix, 0...1, percent: true)
             }
         }
-        .opacity(isEnabled ? 1 : 0.5)
     }
 
     private func card<Knobs: View>(
@@ -57,6 +72,11 @@ struct EffectsPage: View {
             HStack {
                 Text(title).font(.subheadline.weight(.semibold))
                 Spacer()
+                Image(systemName: "line.3.horizontal")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(.secondary)
+                    .draggable(midi.rawValue)
+                    .help("Drag to change the order effects are applied")
                 Button(action: reset) {
                     Image(systemName: "arrow.counterclockwise").font(.system(size: 11, weight: .semibold))
                 }
@@ -79,6 +99,11 @@ struct EffectsPage: View {
         .contentShape(Rectangle())
         // Select only: a knob double-click (reset) would toggle it off again.
         .onTapGesture { shown = midi }
+        .dropDestination(for: String.self) { items, _ in
+            guard let dragged = items.first.flatMap(EffectSwitch.init(rawValue:)) else { return false }
+            effects.order.move(dragged, to: midi)
+            return true
+        }
     }
 }
 

@@ -41,6 +41,37 @@ struct EffectsSettings: Equatable, Codable {
         var mix = 0.5
     }
 
+    /// Which effect runs in each slot of the chain, first to last.
+    struct Order: Equatable, Codable {
+        private static let defaultSequence: [EffectSwitch] = [.compressor, .bass, .chorus, .delay, .reverb, .widener]
+
+        /// One nibble per slot, so the audio thread copies it without allocating.
+        private var packed: UInt32
+
+        var sequence: [EffectSwitch] { (0..<EffectSwitch.allCases.count).map(stage(at:)) }
+
+        init() { self.init(Self.defaultSequence) }
+
+        private init(_ sequence: [EffectSwitch]) {
+            packed = sequence.enumerated().reduce(0) { packed, slot in
+                packed | UInt32(EffectSwitch.allCases.firstIndex(of: slot.element)!) << (4 * slot.offset)
+            }
+        }
+
+        func stage(at slot: Int) -> EffectSwitch {
+            EffectSwitch.allCases[Int(packed >> (4 * slot) & 0xF)]
+        }
+
+        /// Takes the slot `target` holds now; the effects in between shift over.
+        mutating func move(_ effect: EffectSwitch, to target: EffectSwitch) {
+            var sequence = sequence
+            guard let from = sequence.firstIndex(of: effect), let to = sequence.firstIndex(of: target) else { return }
+            sequence.insert(sequence.remove(at: from), at: to)
+            self = Order(sequence)
+        }
+    }
+
+    var order = Order()
     var reverb = Reverb()
     var delay = Delay()
     var compressor = Compressor()
@@ -224,74 +255,81 @@ final class EffectsProcessor {
 
         let width = Float(settings.widener.width)
 
+        let stageCount = EffectSwitch.allCases.count
+
         for frame in 0..<frames {
             let leftIndex = frame * left.stride
             let rightIndex = frame * right.stride
             var l = left.samples[leftIndex]
             var r = right.samples[rightIndex]
 
-            if compressor.isOn {
-                let level = max(abs(l), abs(r))
-                let coefficient = level > envelope ? attackCoefficient : releaseCoefficient
-                envelope = level + coefficient * (envelope - level)
-                let levelDb = 20 * log10f(envelope + 1e-9)
-                let gain = powf(10, (Self.compressorGainDb(levelDb: levelDb, threshold: threshold, ratio: ratio) + makeupDb) / 20)
-                l *= gain
-                r *= gain
-            }
-
-            if bass.isOn {
-                // Saturation adds harmonics heard as bass even where speakers can't play the fundamental.
-                let low = bassState.process(0.5 * (l + r), bassCoefficients)
-                let harmonics = bassAmount * 0.5 * tanhf(4 * low)
-                l += harmonics
-                r += harmonics
-            }
-
-            if chorus.isOn {
-                let sweep = sin(chorusPhase)
-                let wetLeft = chorusLeft.read(delay: chorusBase + chorusSwing * Float(sweep))
-                let wetRight = chorusRight.read(delay: chorusBase + chorusSwing * Float(cos(chorusPhase)))
-                chorusLeft.write(l)
-                chorusRight.write(r)
-                chorusPhase += chorusIncrement
-                if chorusPhase > 2 * Double.pi { chorusPhase -= 2 * Double.pi }
-                l = l * (1 - 0.5 * chorusMix) + wetLeft * 0.5 * chorusMix
-                r = r * (1 - 0.5 * chorusMix) + wetRight * 0.5 * chorusMix
-            }
-
-            if delay.isOn {
-                // Glide: jumping to a new time clicks.
-                smoothedDelaySamples += (targetDelay - smoothedDelaySamples) * 0.0002
-                let echoLeft = delayLeft.read(delay: smoothedDelaySamples)
-                let echoRight = delayRight.read(delay: smoothedDelaySamples)
-                delayLeft.write(l + echoLeft * feedback)
-                delayRight.write(r + echoRight * feedback)
-                l += echoLeft * delayMix
-                r += echoRight * delayMix
-            }
-
-            if reverb.isOn {
-                let input = (l + r) * 0.015
-                var outLeft: Float = 0
-                var outRight: Float = 0
-                for index in 0..<Self.combTunings.count {
-                    outLeft += combsLeft[index].process(input, feedback: roomFeedback, damp: damp)
-                    outRight += combsRight[index].process(input, feedback: roomFeedback, damp: damp)
+            for slot in 0..<stageCount {
+                switch settings.order.stage(at: slot) {
+                case .compressor:
+                    if compressor.isOn {
+                        let level = max(abs(l), abs(r))
+                        let coefficient = level > envelope ? attackCoefficient : releaseCoefficient
+                        envelope = level + coefficient * (envelope - level)
+                        let levelDb = 20 * log10f(envelope + 1e-9)
+                        let gain = powf(10, (Self.compressorGainDb(levelDb: levelDb, threshold: threshold, ratio: ratio) + makeupDb) / 20)
+                        l *= gain
+                        r *= gain
+                    }
+                case .bass:
+                    if bass.isOn {
+                        // Saturation adds harmonics heard as bass even where speakers can't play the fundamental.
+                        let low = bassState.process(0.5 * (l + r), bassCoefficients)
+                        let harmonics = bassAmount * 0.5 * tanhf(4 * low)
+                        l += harmonics
+                        r += harmonics
+                    }
+                case .chorus:
+                    if chorus.isOn {
+                        let sweep = sin(chorusPhase)
+                        let wetLeft = chorusLeft.read(delay: chorusBase + chorusSwing * Float(sweep))
+                        let wetRight = chorusRight.read(delay: chorusBase + chorusSwing * Float(cos(chorusPhase)))
+                        chorusLeft.write(l)
+                        chorusRight.write(r)
+                        chorusPhase += chorusIncrement
+                        if chorusPhase > 2 * Double.pi { chorusPhase -= 2 * Double.pi }
+                        l = l * (1 - 0.5 * chorusMix) + wetLeft * 0.5 * chorusMix
+                        r = r * (1 - 0.5 * chorusMix) + wetRight * 0.5 * chorusMix
+                    }
+                case .delay:
+                    if delay.isOn {
+                        // Glide: jumping to a new time clicks.
+                        smoothedDelaySamples += (targetDelay - smoothedDelaySamples) * 0.0002
+                        let echoLeft = delayLeft.read(delay: smoothedDelaySamples)
+                        let echoRight = delayRight.read(delay: smoothedDelaySamples)
+                        delayLeft.write(l + echoLeft * feedback)
+                        delayRight.write(r + echoRight * feedback)
+                        l += echoLeft * delayMix
+                        r += echoRight * delayMix
+                    }
+                case .reverb:
+                    if reverb.isOn {
+                        let input = (l + r) * 0.015
+                        var outLeft: Float = 0
+                        var outRight: Float = 0
+                        for index in 0..<Self.combTunings.count {
+                            outLeft += combsLeft[index].process(input, feedback: roomFeedback, damp: damp)
+                            outRight += combsRight[index].process(input, feedback: roomFeedback, damp: damp)
+                        }
+                        for index in 0..<Self.allpassTunings.count {
+                            outLeft = allpassesLeft[index].process(outLeft)
+                            outRight = allpassesRight[index].process(outRight)
+                        }
+                        l = l * reverbDry + outLeft * reverbWet
+                        r = r * reverbDry + outRight * reverbWet
+                    }
+                case .widener:
+                    if settings.widener.isOn {
+                        let mid = 0.5 * (l + r)
+                        let side = 0.5 * (l - r) * width
+                        l = mid + side
+                        r = mid - side
+                    }
                 }
-                for index in 0..<Self.allpassTunings.count {
-                    outLeft = allpassesLeft[index].process(outLeft)
-                    outRight = allpassesRight[index].process(outRight)
-                }
-                l = l * reverbDry + outLeft * reverbWet
-                r = r * reverbDry + outRight * reverbWet
-            }
-
-            if settings.widener.isOn {
-                let mid = 0.5 * (l + r)
-                let side = 0.5 * (l - r) * width
-                l = mid + side
-                r = mid - side
             }
 
             left.samples[leftIndex] = l

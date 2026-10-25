@@ -84,4 +84,23 @@ final class EffectsTests: XCTestCase {
         let out = run(settings, left: loud, right: loud)
         XCTAssertTrue(out.left.allSatisfy(\.isFinite) && out.right.allSatisfy(\.isFinite))
     }
+
+    func testMovingAnEffectShiftsTheOthers() {
+        var order = EffectsSettings.Order()
+        order.move(.widener, to: .compressor)
+        XCTAssertEqual(order.sequence, [.widener, .compressor, .bass, .chorus, .delay, .reverb])
+        order.move(.widener, to: .reverb)
+        XCTAssertEqual(order.sequence, [.compressor, .bass, .chorus, .delay, .reverb, .widener])
+    }
+
+    func testChainOrderChangesTheSound() {
+        let loud = (0..<4_800).map { Float(0.8 * sin(Double($0) * 0.05)) }
+        var settings = EffectsSettings()
+        settings.compressor = .init(isOn: true, threshold: -30, ratio: 10, makeup: 0)
+        settings.bassEnhancer = .init(isOn: true, amount: 1, frequency: 250)
+        let compressedFirst = run(settings, left: loud, right: loud).left
+        settings.order.move(.bass, to: .compressor)
+        let bassFirst = run(settings, left: loud, right: loud).left
+        XCTAssertNotEqual(compressedFirst, bassFirst)
+    }
 }
