@@ -122,6 +122,27 @@ final class MenuBarController: ObservableObject {
             syncPipeline()
         }
     }
+    // Hearing cap: peaks at the ear stay under hearingCapSPL at any volume or boost.
+    // fullVolumeSPL is the calibration: dB SPL of a full-scale signal at 100% volume.
+    static let hearingCapRange: ClosedRange<Double> = 60...100
+    static let fullVolumeSPLRange: ClosedRange<Double> = 80...130
+    @Published var isHearingCapOn = UserDefaults.standard.bool(forKey: "hearingCapOn") {
+        didSet { UserDefaults.standard.set(isHearingCapOn, forKey: "hearingCapOn"); updateCeiling() }
+    }
+    @Published var hearingCapSPL = UserDefaults.standard.object(forKey: "hearingCapSPL") as? Double ?? 85 {
+        didSet { UserDefaults.standard.set(hearingCapSPL, forKey: "hearingCapSPL"); updateCeiling() }
+    }
+    // ponytail: one calibration for every device; key it by device UID if you switch headphones often.
+    @Published var fullVolumeSPL = UserDefaults.standard.object(forKey: "fullVolumeSPL") as? Double ?? 110 {
+        didSet { UserDefaults.standard.set(fullVolumeSPL, forKey: "fullVolumeSPL"); updateCeiling() }
+    }
+
+    private func updateCeiling() {
+        pipeline.ceiling = isHearingCapOn
+            ? Limiter.hearingCeiling(capSPL: hearingCapSPL, fullVolumeSPL: fullVolumeSPL,
+                                     attenuationDb: Double(systemVolume.attenuationDb))
+            : Limiter.ceiling
+    }
     @Published private(set) var appPositions = SpatialMap.load()
 
     var placedApps: [AudioApp] {
@@ -215,8 +236,10 @@ final class MenuBarController: ObservableObject {
             guard let self else { return }
             self.volume = volume
             self.isVolumeAdjustable = self.systemVolume.isAdjustable
+            self.updateCeiling()
         }
         volume = systemVolume.volume ?? 0
+        updateCeiling()
         isVolumeAdjustable = systemVolume.isAdjustable
 
         outputDevices.onChange = { [weak self] in self?.refreshDevices() }

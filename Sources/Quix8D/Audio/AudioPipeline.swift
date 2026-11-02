@@ -207,6 +207,8 @@ class AudioPipeline {
     private var _isBypassed: Bool = false
     /// Linear gain after effects, then peak-limited.
     private var _boost: Float = 1
+    /// Linear peak cap for hearing safety; the limiter clamps it to its own ceiling.
+    private var _ceiling: Float = Limiter.ceiling
     private var _pan: Float = 0
     private var _effects = EffectsSettings()   // guarded by controlsLock
     private var _effectsEnabled = true         // guarded by controlsLock
@@ -283,6 +285,11 @@ class AudioPipeline {
         set { os_unfair_lock_lock(&controlsLock); defer { os_unfair_lock_unlock(&controlsLock) }; _boost = newValue }
     }
 
+    var ceiling: Float {
+        get { os_unfair_lock_lock(&controlsLock); defer { os_unfair_lock_unlock(&controlsLock) }; return _ceiling }
+        set { os_unfair_lock_lock(&controlsLock); defer { os_unfair_lock_unlock(&controlsLock) }; _ceiling = newValue }
+    }
+
     /// 0...1 keyed by AudioApp.id; unlisted apps play at 1.
     func setAppVolumes(_ volumes: [String: Float]) {
         var old = volumes
@@ -356,7 +363,7 @@ class AudioPipeline {
 
     /// Also copies per-tap gains and EQ into the frame buffers.
     private func currentControls() -> (
-        speed: Double, isBypassed: Bool, boost: Float, tapCount: Int, eqActive: Bool, analyzerOn: Bool, pan: Float,
+        speed: Double, isBypassed: Bool, boost: Float, ceiling: Float, tapCount: Int, eqActive: Bool, analyzerOn: Bool, pan: Float,
         effects: EffectsSettings?, slotCount: Int
     ) {
         os_unfair_lock_lock(&controlsLock)
@@ -384,7 +391,7 @@ class AudioPipeline {
             frameTapEQActive.update(repeating: false, count: _tapCount)
         }
         let effects = _effectsEnabled && _effects.anyOn ? _effects : nil
-        return (_speed, _isBypassed, _boost, _tapCount, _eqActive, _isAnalyzerOn, _pan, effects, _slotCount)
+        return (_speed, _isBypassed, _boost, _ceiling, _tapCount, _eqActive, _isAnalyzerOn, _pan, effects, _slotCount)
     }
 
     func start(speed: Double) throws {
@@ -565,7 +572,7 @@ class AudioPipeline {
         }
 
         // Always on, so EQ and effects can't clip the output either.
-        limiter?.process(left: leftDestination, right: rightDestination, inputGain: controls.boost)
+        limiter?.process(left: leftDestination, right: rightDestination, inputGain: controls.boost, ceiling: controls.ceiling)
 
         if controls.analyzerOn {
             feedAnalyzer(left: leftDestination, right: rightDestination)

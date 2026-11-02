@@ -4,7 +4,7 @@ import XCTest
 final class LimiterTests: XCTestCase {
     private let sampleRate = 48_000.0
 
-    private func limit(_ left: [Float], _ right: [Float], gain: Float, block: Int = 512) -> (left: [Float], right: [Float]) {
+    private func limit(_ left: [Float], _ right: [Float], gain: Float, ceiling: Float = Limiter.ceiling, block: Int = 512) -> (left: [Float], right: [Float]) {
         let limiter = Limiter(sampleRate: sampleRate)
         var left = left, right = right
         left.withUnsafeMutableBufferPointer { l in
@@ -12,7 +12,7 @@ final class LimiterTests: XCTestCase {
                 var start = 0
                 while start < l.count {
                     let frames = min(block, l.count - start)
-                    limiter.process(left: (l.baseAddress! + start, 1, frames), right: (r.baseAddress! + start, 1, frames), inputGain: gain)
+                    limiter.process(left: (l.baseAddress! + start, 1, frames), right: (r.baseAddress! + start, 1, frames), inputGain: gain, ceiling: ceiling)
                     start += frames
                 }
             }
@@ -67,5 +67,26 @@ final class LimiterTests: XCTestCase {
         // The old soft clipper measured ~38% THD here.
         let output = limit(sine(peak: 0.89), sine(peak: 0.89), gain: 6).left
         XCTAssertLessThan(thd(output, hz: 1_000), 0.01)
+    }
+
+    func testHearingCapHoldsLowerCeilingAndClampsHigherOne() {
+        let cap = Float(pow(10, -12.0 / 20))
+        let capped = limit(sine(peak: 0.9), sine(peak: 0.9), gain: 6, ceiling: cap).left
+        XCTAssertLessThanOrEqual(capped.map(abs).max()!, cap + 1e-4)
+        XCTAssertGreaterThan(capped.map(abs).max()!, cap * 0.9)
+
+        let unclamped = limit(sine(peak: 0.9), sine(peak: 0.9), gain: 6, ceiling: 2).left
+        XCTAssertLessThanOrEqual(unclamped.map(abs).max()!, Limiter.ceiling + 1e-4)
+    }
+
+    func testHearingCeilingTracksVolume() {
+        // 110 dB headphones at full volume, 75 dB cap: 35 dB of headroom to remove.
+        XCTAssertEqual(Limiter.hearingCeiling(capSPL: 75, fullVolumeSPL: 110, attenuationDb: 0),
+                       Float(pow(10, -35.0 / 20)), accuracy: 1e-6)
+        // Volume 20 dB down: the signal may be 20 dB hotter.
+        XCTAssertEqual(Limiter.hearingCeiling(capSPL: 75, fullVolumeSPL: 110, attenuationDb: -20),
+                       Float(pow(10, -15.0 / 20)), accuracy: 1e-6)
+        // Volume so low the cap can't be reached: plain limiter ceiling.
+        XCTAssertEqual(Limiter.hearingCeiling(capSPL: 75, fullVolumeSPL: 110, attenuationDb: -40), Limiter.ceiling)
     }
 }

@@ -73,6 +73,7 @@ struct ControlPanelView: View {
             )
             .midiLearnable(.pan)
         }
+        hearingCap
         Divider()
         AppFaders(controller: controller)
         Divider()
@@ -147,6 +148,39 @@ struct ControlPanelView: View {
                 ProgressView().controlSize(.small).offset(x: 28)
             }
         }
+    }
+
+    private var hearingCap: some View {
+        let isOn = controller.isHearingCapOn
+        return VStack(spacing: 6) {
+            HStack(spacing: 8) {
+                Button { controller.isHearingCapOn.toggle() } label: {
+                    Image(systemName: isOn ? "ear.fill" : "ear")
+                        .font(.system(size: 15, weight: .semibold))
+                        .foregroundStyle(isOn ? Color.green : Color.secondary)
+                }
+                .buttonStyle(.borderless)
+                .accessibilityLabel("Hearing cap")
+                .accessibilityValue(isOn ? "On" : "Off")
+                Slider(value: $controller.hearingCapSPL, in: MenuBarController.hearingCapRange, step: 1)
+                    .disabled(!isOn)
+                    .accessibilityLabel("Maximum level")
+                    .accessibilityValue("\(Int(controller.hearingCapSPL)) dB")
+                Text(isOn ? "Max \(Int(controller.hearingCapSPL)) dB" : "No cap")
+                    .font(.caption.monospacedDigit())
+                    .frame(width: 70, alignment: .trailing)
+            }
+            if isOn {
+                Stepper(value: $controller.fullVolumeSPL, in: MenuBarController.fullVolumeSPLRange) {
+                    Text("Headphones at 100%: \(Int(controller.fullVolumeSPL)) dB")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+                .controlSize(.small)
+                .help("How loud your headphones get at 100% volume with full-scale audio. Higher is safer.")
+            }
+        }
+        .help("Peaks at your ears stay under this level at any volume or boost.")
     }
 
     private var boostButton: some View {

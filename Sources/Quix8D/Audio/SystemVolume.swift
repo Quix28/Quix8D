@@ -36,6 +36,28 @@ final class SystemVolume {
         return status == noErr ? value : nil
     }
 
+    /// dB below full volume (<= 0); 0 when the device reports no volume control,
+    /// which caps as if it were at full volume.
+    // Uses the scalar-to-dB map: some Bluetooth devices report a bogus VolumeDecibels.
+    var attenuationDb: Float {
+        guard let volume else { return 0 }
+        for element in [kAudioObjectPropertyElementMain, 1] {
+            if let now = decibels(scalar: volume, element: element), let full = decibels(scalar: 1, element: element) {
+                return min(0, now - full)
+            }
+        }
+        return 0
+    }
+
+    private func decibels(scalar: Float, element: AudioObjectPropertyElement) -> Float? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyVolumeScalarToDecibels,
+            mScope: kAudioDevicePropertyScopeOutput, mElement: element)
+        var value = scalar
+        var size = UInt32(MemoryLayout<Float32>.size)
+        return AudioObjectGetPropertyData(deviceID, &address, 0, nil, &size, &value) == noErr ? value : nil
+    }
+
     var isAdjustable: Bool {
         var address = Self.volumeAddress
         var settable: DarwinBoolean = false
